@@ -459,117 +459,219 @@ private struct TitleScreen: View {
     let onStart: () -> Void
     @State private var logoScale: CGFloat = 0.1
     @State private var startScale: CGFloat = 1.0
+    private var titleLogoName: String {
+        UIImage(named: "hex2") != nil ? "hex2" : "hex"
+    }
     private var buildLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        return "Version \(version) (\(build))"
+        let buildStamp = bundleBuildStamp()
+        return "Version \(version) (\(build))  \(buildStamp)"
+    }
+
+    private func bundleBuildStamp() -> String {
+        guard let executableURL = Bundle.main.executableURL,
+              let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
+              let date = values.contentModificationDate else {
+            return "Stamp ?"
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return "Stamp \(formatter.string(from: date))"
     }
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
+        GeometryReader { proxy in
+            let contentWidth = min(max(proxy.size.width - 40, 300), 560)
+            let compactRows = contentWidth < 430
+            let rowLabelWidth: CGFloat = 110
+            let rowControlsWidth = compactRows
+                ? contentWidth
+                : max(220, contentWidth - rowLabelWidth - 10)
+            let buttonWidth = (rowControlsWidth - 10) * 0.5
+            let logoWidth = min(contentWidth, 440)
 
-            VStack(spacing: 20) {
-                Image("hex")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 440)
-                    .scaleEffect(logoScale)
-                    .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 6)
-                    .onAppear {
-                        logoScale = 0.2
-                        withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 70, damping: 5, initialVelocity: 0)) {
-                            logoScale = 1.0
-                        }
-                    }
-                    .onTapGesture {
-                        logoScale = 0.2
-                        withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 70, damping: 5, initialVelocity: 0)) {
-                            logoScale = 1.0
-                        }
-                    }
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.24, green: 0.04, blue: 0.08),
+                        Color(red: 0.04, green: 0.10, blue: 0.25)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                    .ignoresSafeArea()
 
-                VStack(spacing: 14) {
-                    ToggleImage(name: redAI ? "RC" : "RH", width: 400) {
-                        redAI.toggle()
-                        onToggle()
-                    }
-
-                    ToggleImage(name: blueAI ? "BC" : "BH", width: 400) {
-                        blueAI.toggle()
-                        onToggle()
-                    }
-
-                    HStack(spacing: 14) {
-                        ModeButton(title: "Hexello", isSelected: gameMode == .hexello) {
-                            gameMode = .hexello
-                            onToggle()
-                        }
-                        ModeButton(title: "Hexplode", isSelected: gameMode == .hexpand) {
-                            gameMode = .hexpand
-                            onToggle()
-                        }
-                    }
-
-                    HStack(spacing: 14) {
-                        ModeButton(title: "Easy", isSelected: aiDifficulty == .easy) {
-                            aiDifficulty = .easy
-                            onToggle()
-                        }
-                        ModeButton(title: "Hard", isSelected: aiDifficulty == .hard) {
-                            aiDifficulty = .hard
-                            onToggle()
-                        }
-                    }
-
-                    let smallSubtitle = gameMode == .hexpand ? "3 per side" : "4 per side"
-                    let largeSubtitle = gameMode == .hexpand ? "4 per side" : "6 per side"
-
-                    HStack(spacing: 14) {
-                        BoardSizeButton(
-                            title: "Small",
-                            subtitle: smallSubtitle,
-                            isSelected: boardSizeOption == .small
-                        ) {
-                            boardSizeOption = .small
-                            onToggle()
-                        }
-
-                        BoardSizeButton(
-                            title: "Large",
-                            subtitle: largeSubtitle,
-                            isSelected: boardSizeOption == .large
-                        ) {
-                            boardSizeOption = .large
-                            onToggle()
-                        }
-                    }
-
-                }
-                .padding(.horizontal, 24)
-
-                Image("starthex")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 154)
-                    .scaleEffect(startScale)
-                    .onTapGesture {
-                        startScale = 0.9
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            startScale = 0.9
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                            withAnimation(.easeInOut(duration: 0.25)) {
-                                startScale = 1.0
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 14) {
+                        Image(titleLogoName)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: logoWidth)
+                            .scaleEffect(logoScale)
+                            .shadow(color: .black.opacity(0.4), radius: 12, x: 0, y: 6)
+                            .onAppear {
+                                logoScale = 0.2
+                                withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 70, damping: 5, initialVelocity: 0)) {
+                                    logoScale = 1.0
+                                }
                             }
-                        }
-                        onToggle()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            onStart()
-                        }
-                    }
+                            .allowsHitTesting(false)
 
+                        VStack(spacing: 10) {
+                            VStack(spacing: 8) {
+                                Text("Players")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                PlayerControlRow(
+                                    title: "Red Player",
+                                    titleColor: .red,
+                                    isAI: redAI,
+                                    compact: compactRows,
+                                    rowLabelWidth: rowLabelWidth,
+                                    buttonWidth: buttonWidth,
+                                    onHumanTap: {
+                                        guard redAI else { return }
+                                        redAI = false
+                                        onToggle()
+                                    },
+                                    onComputerTap: {
+                                        guard !redAI else { return }
+                                        redAI = true
+                                        onToggle()
+                                    }
+                                )
+
+                                PlayerControlRow(
+                                    title: "Blue Player",
+                                    titleColor: .blue,
+                                    isAI: blueAI,
+                                    compact: compactRows,
+                                    rowLabelWidth: rowLabelWidth,
+                                    buttonWidth: buttonWidth,
+                                    onHumanTap: {
+                                        guard blueAI else { return }
+                                        blueAI = false
+                                        onToggle()
+                                    },
+                                    onComputerTap: {
+                                        guard !blueAI else { return }
+                                        blueAI = true
+                                        onToggle()
+                                    }
+                                )
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.black.opacity(0.8), lineWidth: 2)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                            VStack(spacing: 8) {
+                                Text("Game Setup")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                SetupOptionRow(title: "Game Type", compact: compactRows, rowLabelWidth: rowLabelWidth) {
+                                    HStack(spacing: 10) {
+                                        ModeButton(title: "Hexello", isSelected: gameMode == .hexello, width: buttonWidth, height: 32) {
+                                            gameMode = .hexello
+                                            onToggle()
+                                        }
+                                        ModeButton(title: "Hexplode", isSelected: gameMode == .hexpand, width: buttonWidth, height: 32) {
+                                            gameMode = .hexpand
+                                            onToggle()
+                                        }
+                                    }
+                                }
+
+                                SetupOptionRow(title: "Difficulty", compact: compactRows, rowLabelWidth: rowLabelWidth) {
+                                    HStack(spacing: 10) {
+                                        ModeButton(title: "Easy", isSelected: aiDifficulty == .easy, width: buttonWidth, height: 32) {
+                                            aiDifficulty = .easy
+                                            onToggle()
+                                        }
+                                        ModeButton(title: "Hard", isSelected: aiDifficulty == .hard, width: buttonWidth, height: 32) {
+                                            aiDifficulty = .hard
+                                            onToggle()
+                                        }
+                                    }
+                                }
+
+                                let smallSubtitle = gameMode == .hexpand ? "3 per side" : "4 per side"
+                                let largeSubtitle = gameMode == .hexpand ? "4 per side" : "6 per side"
+
+                                SetupOptionRow(title: "Board Size", compact: compactRows, rowLabelWidth: rowLabelWidth) {
+                                    HStack(spacing: 10) {
+                                        BoardSizeButton(
+                                            title: "Small",
+                                            subtitle: smallSubtitle,
+                                            isSelected: boardSizeOption == .small,
+                                            width: buttonWidth
+                                        ) {
+                                            boardSizeOption = .small
+                                            onToggle()
+                                        }
+
+                                        BoardSizeButton(
+                                            title: "Large",
+                                            subtitle: largeSubtitle,
+                                            isSelected: boardSizeOption == .large,
+                                            width: buttonWidth
+                                        ) {
+                                            boardSizeOption = .large
+                                            onToggle()
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.black.opacity(0.8), lineWidth: 2)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .frame(width: contentWidth)
+
+                        Button {
+                            startScale = 0.9
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                startScale = 0.9
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    startScale = 1.0
+                                }
+                            }
+                            onToggle()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                onStart()
+                            }
+                        } label: {
+                            Image("starthex")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 150)
+                                .scaleEffect(startScale)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 18)
+                    .frame(maxWidth: .infinity)
+                }
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -601,51 +703,82 @@ private final class SoundPlayer: ObservableObject {
         player?.play()
     }
 }
-private struct ToggleImage: View {
-    let name: String
-    let width: CGFloat
-    let onTap: () -> Void
-    @State private var scale: CGFloat = 1.0
+private struct PlayerControlRow: View {
+    let title: String
+    let titleColor: Color
+    let isAI: Bool
+    let compact: Bool
+    let rowLabelWidth: CGFloat
+    let buttonWidth: CGFloat
+    let onHumanTap: () -> Void
+    let onComputerTap: () -> Void
 
     var body: some View {
-        if let image = loadImage(named: name) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(width: width)
-                .scaleEffect(scale)
-                .onTapGesture {
-                    animateTap()
-                    onTap()
-                }
-        } else {
-            Color.black
-                .frame(width: width, height: width * 0.4)
-                .scaleEffect(scale)
-                .onTapGesture {
-                    animateTap()
-                    onTap()
-                }
-        }
-    }
+        Group {
+            if compact {
+                VStack(spacing: 6) {
+                    label
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-    private func animateTap() {
-        scale = 0.95
-        withAnimation(.easeInOut(duration: 0.25)) {
-            scale = 0.95
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                scale = 1.0
+                    options
+                }
+            } else {
+                HStack(spacing: 10) {
+                    label
+                        .frame(width: rowLabelWidth, alignment: .leading)
+
+                    options
+                }
             }
         }
     }
 
-    private func loadImage(named name: String) -> UIImage? {
-        if let url = Bundle.main.url(forResource: name, withExtension: "png") {
-            return UIImage(contentsOfFile: url.path)
+    private var label: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(titleColor)
+                .frame(width: 9, height: 9)
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
         }
-        return UIImage(named: name)
+    }
+
+    private var options: some View {
+        HStack(spacing: 10) {
+            ModeButton(title: "Human", isSelected: !isAI, width: buttonWidth, height: 32, onTap: onHumanTap)
+            ModeButton(title: "Computer", isSelected: isAI, width: buttonWidth, height: 32, onTap: onComputerTap)
+        }
+    }
+}
+private struct SetupOptionRow<Content: View>: View {
+    let title: String
+    let compact: Bool
+    let rowLabelWidth: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        Group {
+            if compact {
+                VStack(spacing: 6) {
+                    label
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    content
+                }
+            } else {
+                HStack(alignment: .center, spacing: 10) {
+                    label
+                        .frame(width: rowLabelWidth, alignment: .leading)
+                    content
+                }
+            }
+        }
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.72))
     }
 }
 private enum BoardSizeOption {
@@ -657,77 +790,75 @@ private struct BoardSizeButton: View {
     let title: String
     let subtitle: String
     let isSelected: Bool
+    let width: CGFloat
     let onTap: () -> Void
-    @State private var scale: CGFloat = 1.0
 
     var body: some View {
-        VStack(spacing: 2) {
-            Text(title)
-                .font(.system(size: 16, weight: .heavy, design: .rounded))
-            Text(subtitle)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.8))
-        }
-        .foregroundStyle(.white)
-        .frame(width: 140, height: 44)
-        .background(Color.white.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? Color.yellow.opacity(0.9) : Color.black.opacity(0.8), lineWidth: 2)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .scaleEffect(scale)
-        .onTapGesture {
-            animateTap()
-            onTap()
-        }
-    }
-
-    private func animateTap() {
-        scale = 0.92
-        withAnimation(.easeInOut(duration: 0.2)) {
-            scale = 0.92
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                scale = 1.0
+        Button(action: onTap) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 14, weight: .heavy, design: .rounded))
+                Text(subtitle)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
+            .foregroundStyle(.white)
+            .frame(width: width, height: 34)
+            .background(Color.white.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.yellow.opacity(0.9) : Color.black.opacity(0.8), lineWidth: 2)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+        .buttonStyle(PressableScaleButtonStyle())
     }
 }
 
 private struct ModeButton: View {
     let title: String
     let isSelected: Bool
+    let width: CGFloat
+    let height: CGFloat
     let onTap: () -> Void
-    @State private var scale: CGFloat = 1.0
-    var body: some View {
-        Text(title)
-            .font(.system(size: 16, weight: .heavy, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: 140, height: 36)
-            .background(Color.white.opacity(0.08))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Color.yellow.opacity(0.9) : Color.black.opacity(0.8), lineWidth: 2)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .scaleEffect(scale)
-            .onTapGesture {
-                animateTap()
-                onTap()
-            }
+
+    init(
+        title: String,
+        isSelected: Bool,
+        width: CGFloat = 140,
+        height: CGFloat = 36,
+        onTap: @escaping () -> Void
+    ) {
+        self.title = title
+        self.isSelected = isSelected
+        self.width = width
+        self.height = height
+        self.onTap = onTap
     }
 
-    private func animateTap() {
-        scale = 0.92
-        withAnimation(.easeInOut(duration: 0.2)) {
-            scale = 0.92
+    var body: some View {
+        Button(action: onTap) {
+            Text(title)
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: width, height: height)
+                .background(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isSelected ? Color.yellow.opacity(0.9) : Color.black.opacity(0.8), lineWidth: 2)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                scale = 1.0
-            }
-        }
+        .buttonStyle(PressableScaleButtonStyle())
+    }
+}
+
+private struct PressableScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.easeInOut(duration: 0.14), value: configuration.isPressed)
     }
 }

@@ -101,6 +101,8 @@ final class GameSceneController: NSObject {
     private var startAIOnIntroComplete = false
     private var introCompleted = false
     private let introAnimationDuration: TimeInterval = 2.5
+    private var boardCoords: [AxialCoord] = []
+    private var hexpandTranspositionTable: [HexpandTTKey: HexpandTTEntry] = [:]
 
     override init() {
         scene = SCNScene()
@@ -232,6 +234,8 @@ final class GameSceneController: NSObject {
         blueHadTile = false
         boardNode.childNodes.forEach { $0.removeFromParentNode() }
         let coords = HexGrid.generateHexagon(radius: radius)
+        boardCoords = coords
+        hexpandTranspositionTable.removeAll(keepingCapacity: true)
         for coord in coords {
             let tile = HexTileNode(coord: coord, size: tileSize, height: tileHeight)
             let position = HexGrid.axialToWorld(
@@ -1134,6 +1138,25 @@ final class GameSceneController: NSObject {
         var humanPieces = 0
     }
 
+    private struct HexpandTTKey: Hashable {
+        let stateHash: UInt64
+        let playerCode: UInt8
+        let maximizingCode: UInt8
+    }
+
+    private struct HexpandTTEntry {
+        let depth: Int
+        let score: Int
+        let bound: HexpandTTBound
+        let bestMove: AxialCoord?
+    }
+
+    private enum HexpandTTBound {
+        case exact
+        case lower
+        case upper
+    }
+
     private func bestHexpandMove(for player: TileState, depth: Int) -> AxialCoord? {
         bestHexpandMove(for: player, depth: depth, in: currentHexpandState())
     }
@@ -1203,6 +1226,8 @@ final class GameSceneController: NSObject {
     }
 
     private func bestHexpandMove(for player: TileState, depth: Int, in state: HexpandState) -> AxialCoord? {
+        hexpandTranspositionTable.removeAll(keepingCapacity: true)
+
         let moves = orderedHexpandMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
         var bestMoves: [AxialCoord] = []
@@ -1249,39 +1274,40 @@ final class GameSceneController: NSObject {
             return evaluateHexpand(state: state, for: maximizingFor)
         }
 
-        let moves = orderedHexpandMoves(for: player, in: state)
+        let cacheKey = HexpandTTKey(
+            stateHash: hashHexpandState(state),
+            playerCode: tileStateCode(player),
+            maximizingCode: tileStateCode(maximizingFor)
+        )
+        var preferredMove: AxialCoord?
+        if let entry = hexpandTranspositionTable[cacheKey] {
+            preferredMove = entry.bestMove
+            if entry.depth >= depth {
+                switch entry.bound {
+                case .exact:
+                    return entry.score
+                case .lower:
+                    alpha = max(alpha, entry.score)
+                case .upper:
+                    beta = min(beta, entry.score)
+                }
+                if alpha >= beta {
+                    return entry.score
+                }
+            }
+        }
+        let alphaStart = alpha
+        let betaStart = beta
+
+        let moves = orderedHexpandMoves(for: player, in: state, preferredMove: preferredMove)
         if moves.isEmpty {
             return evaluateHexpand(state: state, for: maximizingFor)
         }
 
-        if player == maximizingFor {
-            var best = Int.min
-            var localAlpha = alpha
-            let localBeta = beta
-            for move in moves {
-                let next = simulateHexpandMove(at: move, player: player, in: state)
-                var childAlpha = localAlpha
-                var childBeta = localBeta
-                let score = minimax(
-                    state: next,
-                    player: player.opposite,
-                    depth: depth - 1,
-                    maximizingFor: maximizingFor,
-                    alpha: &childAlpha,
-                    beta: &childBeta
-                )
-                best = max(best, score)
-                localAlpha = max(localAlpha, best)
-                if localAlpha >= localBeta {
-                    break
-                }
-            }
-            alpha = localAlpha
-            return best
-        }
-
-        var best = Int.max
-        let localAlpha = alpha
+        let maximizingTurn = player == maximizingFor
+        var best = maximizingTurn ? Int.min : Int.max
+        var bestMove: AxialCoord?
+        var localAlpha = alpha
         var localBeta = beta
         for move in moves {
             let next = simulateHexpandMove(at: move, player: player, in: state)
@@ -1295,13 +1321,39 @@ final class GameSceneController: NSObject {
                 alpha: &childAlpha,
                 beta: &childBeta
             )
-            best = min(best, score)
-            localBeta = min(localBeta, best)
+            if maximizingTurn {
+                if score > best {
+                    best = score
+                    bestMove = move
+                }
+                localAlpha = max(localAlpha, best)
+            } else {
+                if score < best {
+                    best = score
+                    bestMove = move
+                }
+                localBeta = min(localBeta, best)
+            }
             if localAlpha >= localBeta {
                 break
             }
         }
+        alpha = localAlpha
         beta = localBeta
+        let bound: HexpandTTBound
+        if best <= alphaStart {
+            bound = .upper
+        } else if best >= betaStart {
+            bound = .lower
+        } else {
+            bound = .exact
+        }
+        hexpandTranspositionTable[cacheKey] = HexpandTTEntry(
+            depth: depth,
+            score: best,
+            bound: bound,
+            bestMove: bestMove
+        )
         return best
     }
 
@@ -1319,7 +1371,8 @@ final class GameSceneController: NSObject {
     }
 
     private func hexpandLegalMoves(for player: TileState, in state: HexpandState) -> [AxialCoord] {
-        state.owners.keys.filter { coord in
+        let coords = boardCoords.isEmpty ? Array(state.owners.keys) : boardCoords
+        return coords.filter { coord in
             let owner = state.owners[coord] ?? .empty
             return owner == .empty || owner == player
         }
@@ -1366,10 +1419,14 @@ final class GameSceneController: NSObject {
         }
     }
 
-    private func orderedHexpandMoves(for player: TileState, in state: HexpandState) -> [AxialCoord] {
+    private func orderedHexpandMoves(
+        for player: TileState,
+        in state: HexpandState,
+        preferredMove: AxialCoord? = nil
+    ) -> [AxialCoord] {
         hexpandLegalMoves(for: player, in: state).sorted { lhs, rhs in
-            let lhsScore = (state.owners[lhs] == player) ? (state.levels[lhs] ?? 0) : 0
-            let rhsScore = (state.owners[rhs] == player) ? (state.levels[rhs] ?? 0) : 0
+            let lhsScore = hexpandMoveOrderingScore(lhs, player: player, in: state, preferredMove: preferredMove)
+            let rhsScore = hexpandMoveOrderingScore(rhs, player: player, in: state, preferredMove: preferredMove)
             if lhsScore != rhsScore {
                 return lhsScore > rhsScore
             }
@@ -1378,6 +1435,65 @@ final class GameSceneController: NSObject {
             }
             return lhs.r < rhs.r
         }
+    }
+
+    private func hexpandMoveOrderingScore(
+        _ coord: AxialCoord,
+        player: TileState,
+        in state: HexpandState,
+        preferredMove: AxialCoord?
+    ) -> Int {
+        var score = 0
+        if coord == preferredMove {
+            score += 10_000
+        }
+
+        let owner = state.owners[coord] ?? .empty
+        let level = state.levels[coord] ?? 0
+        if owner == player {
+            score += 120 + level * 18
+            if level >= 5 {
+                score += 350
+            }
+        } else {
+            score += 40
+        }
+
+        if owner == player, level + 1 > 5 {
+            score += 500
+        }
+
+        let x = coord.q
+        let z = coord.r
+        let y = -x - z
+        let distanceFromCenter = max(abs(x), max(abs(y), abs(z)))
+        score += max(0, radius - distanceFromCenter)
+        return score
+    }
+
+    private func tileStateCode(_ state: TileState) -> UInt8 {
+        switch state {
+        case .empty:
+            return 0
+        case .red:
+            return 1
+        case .blue:
+            return 2
+        }
+    }
+
+    private func hashHexpandState(_ state: HexpandState) -> UInt64 {
+        let coords = boardCoords.isEmpty ? Array(state.owners.keys) : boardCoords
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for coord in coords {
+            let owner = state.owners[coord] ?? .empty
+            let level = state.levels[coord] ?? 0
+            let encoded = UInt64(tileStateCode(owner) | UInt8((max(0, min(7, level))) << 2))
+            hash ^= encoded &* 1_099_511_628_211
+            hash = hash &* 1_099_511_628_211
+        }
+        hash ^= UInt64(state.turnsPlayed & 0xFFFF)
+        return hash
     }
 
     private func summarizeHexpand(state: HexpandState, for player: TileState) -> HexpandSummary {
@@ -1626,7 +1742,19 @@ final class GameSceneController: NSObject {
     }
 
     private func hexpandSearchDepth() -> Int {
-      /*  sideLength >= 4 ? 4 : 5 */
-       5
+        guard aiDifficulty == .hard else {
+            return 2
+        }
+
+        let emptyCount = tileStates.values.reduce(into: 0) { partial, state in
+            if state == .empty {
+                partial += 1
+            }
+        }
+
+        if sideLength >= 4 {
+            return emptyCount <= 14 ? 6 : 5
+        }
+        return 6
     }
 }
