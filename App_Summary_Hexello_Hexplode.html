@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hexello + Hexplode - Simple Rules</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #ffffff;
+      --ink: #0f172a;
+      --muted: #334155;
+      --line: #dbeafe;
+      --red: #dc2626;
+      --blue: #2563eb;
+      --gold: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+      padding: 24px;
+    }
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      background: var(--card);
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      box-shadow: 0 16px 40px rgba(0,0,0,.25);
+      overflow: hidden;
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1fr 140px;
+      gap: 16px;
+      align-items: center;
+      padding: 22px;
+      background: linear-gradient(135deg, #eff6ff, #fef9c3);
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 40px);
+      line-height: 1.05;
+    }
+    .sub {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .logo {
+      width: 100%;
+      max-width: 140px;
+      justify-self: end;
+    }
+    main { padding: 22px; }
+    section {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 16px;
+      background: #ffffff;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+    h3 {
+      margin: 10px 0 6px;
+      font-size: 18px;
+    }
+    p { margin: 8px 0; font-size: 17px; }
+    ul, ol { margin: 8px 0 8px 22px; }
+    li { margin: 6px 0; font-size: 17px; }
+    .goal {
+      font-weight: 700;
+      color: #7c2d12;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .examples {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 10px;
+    }
+    .red { color: var(--red); font-weight: 700; }
+    .blue { color: var(--blue); font-weight: 700; }
+    .tip {
+      border-left: 4px solid var(--gold);
+      background: #fffbeb;
+      padding: 10px;
+      border-radius: 0 8px 8px 0;
+      margin-top: 12px;
+      font-size: 16px;
+    }
+    @media (max-width: 760px) {
+      header { grid-template-columns: 1fr; }
+      .logo { justify-self: start; max-width: 110px; }
+      p, li { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>How to Play</h1>
+        <div class="sub">Hexello and Hexplode (Simple Version)</div>
+      </div>
+      <img class="logo" src="adesmegagame/adesmegagame/hex.png" alt="Game logo" />
+    </header>
+
+    <main>
+      <section>
+        <h2>Game Mode 1: Hexello</h2>
+        <p>Hexello is a bit like Othello/Reversi on a hex board.</p>
+
+        <div class="goal">Goal: Finish with more tiles of your color than your opponent.</div>
+
+        <h3>Rules</h3>
+        <ol>
+          <li>You can only place on an empty tile.</li>
+          <li>Your move must trap enemy tiles in a line between your old tile and your new tile.</li>
+          <li>Trapped tiles flip to your color.</li>
+          <li>If you have no legal move, your turn is skipped.</li>
+          <li>If neither player can move, the game ends. More tiles wins.</li>
+        </ol>
+
+        <div class="examples">
+          <h3>Examples</h3>
+          <ul>
+            <li><strong>Example 1:</strong> Line shows <span class="red">Red</span>, <span class="blue">Blue</span>, <span class="blue">Blue</span>, empty. If <span class="red">Red</span> plays on the empty spot, both Blues flip to Red.</li>
+            <li><strong>Example 2:</strong> If your move traps tiles in 2 directions at once, both lines flip.</li>
+            <li><strong>Example 3:</strong> If it is your turn but there is no legal move, the other player goes again.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <h2>Game Mode 2: Hexplode</h2>
+        <p>Hexplode is about building up balls and making chain explosions.</p>
+
+        <div class="goal">Goal: Take control of the board with smart explosions.</div>
+
+        <h3>Rules</h3>
+        <ol>
+          <li>You can play on an empty tile or on your own tile.</li>
+          <li>Every move adds 1 level (one more ball).</li>
+          <li>When a tile goes above level 5, it explodes.</li>
+          <li>The exploding tile becomes empty.</li>
+          <li>All neighbor tiles get +1 and become the exploding player's color.</li>
+          <li>If a neighbor also goes above 5, it explodes too (chain reaction).</li>
+        </ol>
+
+        <div class="examples">
+          <h3>Examples</h3>
+          <ul>
+            <li><strong>Example 1:</strong> Your red tile is at level 5. You add 1. It hits level 6 and explodes.</li>
+            <li><strong>Example 2:</strong> Two nearby tiles were level 5. They both receive +1 from the blast and also explode.</li>
+            <li><strong>Example 3:</strong> A blue neighbor gets hit by your red explosion. It changes to red and gains a level.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <h2>Simple Strategy Tips</h2>
+        <ul>
+          <li><strong>Hexello:</strong> Corners are very strong. Try to get them.</li>
+          <li><strong>Hexello:</strong> Think one move ahead, not just this move.</li>
+          <li><strong>Hexplode:</strong> Build a few strong spots instead of only one big stack.</li>
+          <li><strong>Hexplode:</strong> Watch for enemy level-5 tiles that might explode soon.</li>
+        </ul>
+        <div class="tip">Tip: If you are learning, use Easy mode first. Then move up to Hard mode when you start winning more often.</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
