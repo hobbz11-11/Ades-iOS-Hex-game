@@ -19,13 +19,19 @@ enum TileState {
 }
 
 final class HexTileNode: SCNNode {
+    private enum TileStyle {
+        case hexello
+        case hexpand
+        case hexfection
+    }
+
     let coord: AxialCoord
     private let material: SCNMaterial
     private let tileSize: CGFloat
     private let baseHeight: Float
     private let selectedDepth: Float = -0.2
     private var heightScale: Float = 1.0
-    private var isHexpandStyle = false
+    private var style: TileStyle = .hexello
 
     init(coord: AxialCoord, size: CGFloat, height: CGFloat) {
         self.coord = coord
@@ -51,9 +57,25 @@ final class HexTileNode: SCNNode {
         applyMaterial(for: state)
     }
 
-    func setStyle(isHexpand: Bool) {
-        isHexpandStyle = isHexpand
-        let chamfer = (Float(baseHeight) * 2) * (isHexpand ? 0.18 : 0.12)
+    func setStyle(for mode: GameMode) {
+        switch mode {
+        case .hexello:
+            style = .hexello
+        case .hexpand:
+            style = .hexpand
+        case .hexfection:
+            style = .hexfection
+        }
+        let chamferScale: Float
+        switch style {
+        case .hexello:
+            chamferScale = 0.12
+        case .hexpand:
+            chamferScale = 0.18
+        case .hexfection:
+            chamferScale = 0.14
+        }
+        let chamfer = (Float(baseHeight) * 2) * chamferScale
         if let shape = geometry as? SCNShape {
             shape.chamferRadius = CGFloat(chamfer)
         }
@@ -148,6 +170,10 @@ final class HexTileNode: SCNNode {
         applyMaterialForState(state)
     }
 
+    func animateTintColor(to color: UIColor, duration: TimeInterval) {
+        animateColor(to: color, duration: duration)
+    }
+
     private func applyHeightScaleImmediate(_ scale: Float) {
         heightScale = max(1.0, scale)
         self.scale = SCNVector3(self.scale.x, self.scale.y, heightScale)
@@ -188,7 +214,7 @@ final class HexTileNode: SCNNode {
 
 
     private func applyMaterialForState(_ state: TileState) {
-        let palette = isHexpandStyle ? Self.hexpandPalette : Self.hexelloPalette
+        let palette = paletteForStyle()
         switch state {
         case .empty:
             material.metalness.contents = palette.emptyMetalness
@@ -240,7 +266,10 @@ final class HexTileNode: SCNNode {
     }
 
     private func paletteColor(for state: TileState) -> UIColor {
-        let palette = isHexpandStyle ? Self.hexpandPalette : Self.hexelloPalette
+        let palette = paletteForStyle()
+        if style == .hexfection {
+            return palette.emptyColor
+        }
         switch state {
         case .empty:
             return palette.emptyColor
@@ -248,6 +277,17 @@ final class HexTileNode: SCNNode {
             return palette.redColor
         case .blue:
             return palette.blueColor
+        }
+    }
+
+    private func paletteForStyle() -> TilePalette {
+        switch style {
+        case .hexello:
+            return Self.hexelloPalette
+        case .hexpand:
+            return Self.hexpandPalette
+        case .hexfection:
+            return Self.hexfectionPalette
         }
     }
 
@@ -279,6 +319,20 @@ final class HexTileNode: SCNNode {
         clearCoatRoughness: 0.2
     )
 
+    // MARK: - Hexfection (Mode 3) Tile Style
+    private static let hexfectionPalette = TilePalette(
+        emptyColor: UIColor(red: 0.56, green: 0.58, blue: 0.62, alpha: 1.0),
+        redColor: UIColor(red: 0.56, green: 0.58, blue: 0.62, alpha: 1.0),
+        blueColor: UIColor(red: 0.56, green: 0.58, blue: 0.62, alpha: 1.0),
+        emptyMetalness: 0.55,
+        emptyRoughness: 0.28,
+        filledMetalness: 0.55,
+        filledRoughness: 0.28,
+        specular: UIColor(white: 0.95, alpha: 1.0),
+        clearCoat: 0.38,
+        clearCoatRoughness: 0.22
+    )
+
     private struct TilePalette {
         let emptyColor: UIColor
         let redColor: UIColor
@@ -306,10 +360,28 @@ final class HexTileNode: SCNNode {
                 alpha: a
             )
         }
+
+        static func lighter(_ color: UIColor, by amount: CGFloat) -> UIColor {
+            var r: CGFloat = 0
+            var g: CGFloat = 0
+            var b: CGFloat = 0
+            var a: CGFloat = 0
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return UIColor(
+                red: min(1, r + amount),
+                green: min(1, g + amount),
+                blue: min(1, b + amount),
+                alpha: a
+            )
+        }
     }
 
     static func darker(by amount: CGFloat, color: UIColor) -> UIColor {
         ColorAdjust.darker(color, by: amount)
+    }
+
+    static func lighter(by amount: CGFloat, color: UIColor) -> UIColor {
+        ColorAdjust.lighter(color, by: amount)
     }
 
     static func hexpandColor(for state: TileState) -> UIColor {
@@ -321,5 +393,20 @@ final class HexTileNode: SCNNode {
         case .blue:
             return hexpandPalette.blueColor
         }
+    }
+
+    static func hexfectionPieceColor(for state: TileState) -> UIColor {
+        switch state {
+        case .red:
+            return UIColor(red: 0.88, green: 0.22, blue: 0.2, alpha: 1.0)
+        case .blue:
+            return UIColor(red: 0.22, green: 0.4, blue: 0.9, alpha: 1.0)
+        case .empty:
+            return hexfectionPalette.emptyColor
+        }
+    }
+
+    static func hexfectionTileBaseColor() -> UIColor {
+        hexfectionPalette.emptyColor
     }
 }

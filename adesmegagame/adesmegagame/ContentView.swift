@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var startToken = UUID()
     @State private var redScore: Int = 0
     @State private var blueScore: Int = 0
+    @State private var turnCount: Int = 0
     @State private var gameOverText: String = ""
     @State private var winnerText: String = ""
     @State private var gameEnded = false
@@ -52,6 +53,7 @@ struct ContentView: View {
                 winnerText: $winnerText,
                 gameEnded: $gameEnded,
                 activePlayer: $activePlayer,
+                turnCount: $turnCount,
                 yawValue: $yawValue,
                 pitchValue: $pitchValue
             )
@@ -92,6 +94,26 @@ struct ContentView: View {
                         )
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                Spacer()
+
+                VStack(spacing: 1) {
+                    Text("Turn")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Text("\(turnCount)")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 88, height: 46)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.black.opacity(0.85), lineWidth: 3)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 Spacer()
 
@@ -239,6 +261,7 @@ struct ContentView: View {
                         gameEnded = false
                         redScore = 0
                         blueScore = 0
+                        turnCount = 0
                         activePlayer = .empty
                         startToken = UUID()
                     }
@@ -264,6 +287,7 @@ private struct GameSceneView: UIViewRepresentable {
     @Binding var winnerText: String
     @Binding var gameEnded: Bool
     @Binding var activePlayer: TileState
+    @Binding var turnCount: Int
     @Binding var yawValue: Float
     @Binding var pitchValue: Float
 
@@ -287,6 +311,9 @@ private struct GameSceneView: UIViewRepresentable {
             onActive: { player in
                 activePlayer = player
             },
+            onTurnCount: { value in
+                turnCount = value
+            },
             onYaw: { yaw in
                 yawValue = yaw
             },
@@ -303,12 +330,16 @@ private struct GameSceneView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: SCNView, context: Context) {
-        context.coordinator.controller.setAIModes(redAI: redAI, blueAI: blueAI)
-        let effectiveLength = gameMode == .hexpand
-            ? (boardSizeOption == .large ? 4 : 3)
-            : (boardSizeOption == .large ? 6 : 4)
-        context.coordinator.controller.setBoardSize(effectiveLength)
         context.coordinator.controller.setGameMode(gameMode)
+        context.coordinator.controller.setAIModes(redAI: redAI, blueAI: blueAI)
+        let effectiveLength: Int
+        switch gameMode {
+        case .hexello, .hexfection:
+            effectiveLength = boardSizeOption == .large ? 6 : 4
+        case .hexpand:
+            effectiveLength = boardSizeOption == .large ? 4 : 3
+        }
+        context.coordinator.controller.setBoardSize(effectiveLength)
         context.coordinator.controller.setAIDifficulty(aiDifficulty)
         context.coordinator.handleReset(token: resetToken)
         context.coordinator.handleStart(token: startToken)
@@ -321,6 +352,7 @@ private struct GameSceneView: UIViewRepresentable {
         private let onScore: (Int, Int) -> Void
         private let onGameOver: (String, String) -> Void
         private let onActive: (TileState) -> Void
+        private let onTurnCount: (Int) -> Void
         private let onYaw: (Float) -> Void
         private let onPitch: (Float) -> Void
         private var lastStartToken = UUID()
@@ -332,6 +364,7 @@ private struct GameSceneView: UIViewRepresentable {
             onScore: @escaping (Int, Int) -> Void,
             onGameOver: @escaping (String, String) -> Void,
             onActive: @escaping (TileState) -> Void,
+            onTurnCount: @escaping (Int) -> Void,
             onYaw: @escaping (Float) -> Void,
             onPitch: @escaping (Float) -> Void
         ) {
@@ -340,6 +373,7 @@ private struct GameSceneView: UIViewRepresentable {
             self.onScore = onScore
             self.onGameOver = onGameOver
             self.onActive = onActive
+            self.onTurnCount = onTurnCount
             self.onYaw = onYaw
             self.onPitch = onPitch
             super.init()
@@ -368,6 +402,9 @@ private struct GameSceneView: UIViewRepresentable {
             controller.onScoreUpdate = { red, blue in
                 onScore(red, blue)
             }
+            controller.onTurnCountUpdate = { count in
+                onTurnCount(count)
+            }
             controller.onGameOver = { [weak self] message, winner in
                 onGameOver(message, winner)
                 self?.controller.startGameOverAnimation()
@@ -380,6 +417,7 @@ private struct GameSceneView: UIViewRepresentable {
             controller.onScoreUpdate = nil
             controller.onGameOver = nil
             controller.onActiveUpdate = nil
+            controller.onTurnCountUpdate = nil
             controller.onYawUpdate = nil
             controller.onPitchUpdate = nil
         }
@@ -436,6 +474,7 @@ private struct GameSceneView: UIViewRepresentable {
             controller.stopGameOverAnimation()
             controller.startNewGame()
             onActive(controller.currentPlayerState())
+            onTurnCount(0)
         }
 
         func handleReset(token: UUID) {
@@ -492,6 +531,7 @@ private struct TitleScreen: View {
                 ? contentWidth
                 : max(220, contentWidth - rowLabelWidth - 10)
             let buttonWidth = (rowControlsWidth - 10) * 0.5
+            let gameTypeButtonWidth = (rowControlsWidth - 20) / 3
             let logoWidth = min(contentWidth, 440)
 
             ZStack {
@@ -583,12 +623,16 @@ private struct TitleScreen: View {
 
                                 SetupOptionRow(title: "Game Type", compact: compactRows, rowLabelWidth: rowLabelWidth) {
                                     HStack(spacing: 10) {
-                                        ModeButton(title: "Hexello", isSelected: gameMode == .hexello, width: buttonWidth, height: 32) {
+                                        ModeButton(title: "Hexello", isSelected: gameMode == .hexello, width: gameTypeButtonWidth, height: 32) {
                                             gameMode = .hexello
                                             onToggle()
                                         }
-                                        ModeButton(title: "Hexplode", isSelected: gameMode == .hexpand, width: buttonWidth, height: 32) {
+                                        ModeButton(title: "Hexplode", isSelected: gameMode == .hexpand, width: gameTypeButtonWidth, height: 32) {
                                             gameMode = .hexpand
+                                            onToggle()
+                                        }
+                                        ModeButton(title: "Hexfection", isSelected: gameMode == .hexfection, width: gameTypeButtonWidth, height: 32) {
+                                            gameMode = .hexfection
                                             onToggle()
                                         }
                                     }
@@ -633,6 +677,7 @@ private struct TitleScreen: View {
                                         }
                                     }
                                 }
+
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
