@@ -55,3 +55,55 @@ python3 tools/hexplode_export_coreml.py \
 Runtime behavior:
 - If `HexplodePolicy` exists in app bundle, the game uses neural priors for **large-board hard Hexplode**.
 - If missing, it falls back automatically to the evolved heuristic AI.
+
+## Interactive training UI
+
+You can watch sample generation and online training step-by-step:
+
+```bash
+python3 tools/hexplode_training_ui.py \
+  --checkpoint tools/outputs/hexplode_policy_value_counterfactual_12h_newlogic_best.pt \
+  --lookahead-ply 5 \
+  --branch-cap 0
+```
+
+What it shows live:
+- Initial board state
+- Proposed move chosen by current model
+- Result after minimax rollout
+- Good/Bad label for that proposal
+- Input plane view, intermediate activation maps, policy map, value output
+
+Controls:
+- `Step (1 sample)` runs one labeled sample + one train update
+- `Run` / `Pause` for continuous training
+- `Visuals On` toggle to disable heavy drawing for faster throughput
+- `Save Checkpoint` writes current weights to the `--out` path
+
+## Graph NN (new)
+
+There is now a Graph Neural Network trainer that uses the true 37-node hex connectivity
+instead of a padded 7x7 grid.
+
+Key point:
+- `--symmetry-rotations 6` uses all six 60-degree board rotations per labeled base sample.
+
+Quick smoke test:
+
+```bash
+python3 tools/hexplode_gnn_counterfactual_train.py \
+  --hours 0.1 \
+  --device cpu \
+  --start-source random \
+  --lookahead-ply 3 \
+  --symmetry-rotations 6 \
+  --round-samples 1200 \
+  --round-epochs 2 \
+  --out tools/outputs/hexplode_gnn_counterfactual_smoke.pt
+```
+
+Long run:
+
+```bash
+./tools/run_hexplode_gnn_counterfactual_overnight.sh
+```

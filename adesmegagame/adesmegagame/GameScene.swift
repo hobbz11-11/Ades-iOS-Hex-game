@@ -33,7 +33,7 @@ final class GameSceneController: NSObject {
     private let defaultBoardPitch: Float = 0
     private var currentPitch: Float = 0
     private let minPitch: Float = -34 * .pi / 180
-    private let maxPitch: Float = 56 * .pi / 180
+    private let maxPitch: Float = 55 * .pi / 180
     private var dragStartYaw: Float = 0
     private var dragStartPitch: Float = 0
     private var angularVelocityYaw: Float = 0
@@ -71,6 +71,34 @@ final class GameSceneController: NSObject {
         source.isPositional = false
         return source
     }()
+    private let jumpAudio: SCNAudioSource? = {
+        guard let source = SCNAudioSource(named: "jump.wav") else { return nil }
+        source.load()
+        source.volume = 0.85
+        source.isPositional = false
+        return source
+    }()
+    private let splitAudio: SCNAudioSource? = {
+        guard let source = SCNAudioSource(named: "split.wav") else { return nil }
+        source.load()
+        source.volume = 0.85
+        source.isPositional = false
+        return source
+    }()
+    private let raiseAudio: SCNAudioSource? = {
+        guard let source = SCNAudioSource(named: "raise.wav") else { return nil }
+        source.load()
+        source.volume = 0.8
+        source.isPositional = false
+        return source
+    }()
+    private let takeoverAudio: SCNAudioSource? = {
+        guard let source = SCNAudioSource(named: "pop3.wav") else { return nil }
+        source.load()
+        source.volume = 0.85
+        source.isPositional = false
+        return source
+    }()
 
     private var tileNodes: [AxialCoord: HexTileNode] = [:]
     private var tileStates: [AxialCoord: TileState] = [:]
@@ -79,6 +107,13 @@ final class GameSceneController: NSObject {
     private var hexpandPendingExplosions: Set<AxialCoord> = []
     private var hexpandExplosionQueue: [AxialCoord] = []
     private var hexpandExplosionQueueHead = 0
+    private let hexelloMoveHintBorderBaseName = "hexelloMoveHintBorder"
+    private lazy var hexelloMoveHintBorderGeometry: SCNGeometry = makeHexelloMoveHintBorderGeometry()
+    private let hexelloMoveHighlightScale: Float = 0.94
+    private let hexelloMoveHighlightDuration: TimeInterval = 0.12
+    private let hexelloMoveTileTintBlend: CGFloat = 0.22
+    private let hexelloMoveBorderThicknessScale: Float = 0.1
+    private let hexelloMoveBorderTopInset: Float = 0.004
     private var hexfectionPieceNodes: [AxialCoord: SCNNode] = [:]
     private var hexfectionTransformedTiles: Set<AxialCoord> = []
     private var hexfectionTintedTiles: Set<AxialCoord> = []
@@ -95,6 +130,14 @@ final class GameSceneController: NSObject {
     private let hexfectionLeapTileTintBlend: CGFloat = 0.25
     private let hexfectionMoveAnimationDuration: TimeInterval = 1.0
     private let hexfectionCaptureAnimationDuration: TimeInterval = 1.0
+    private let hexfectionCaptureWaveDuration: TimeInterval = 1.0
+    private let hexfectionCaptureWaveLeadDelay: TimeInterval = 0.0
+    private let hexfectionCaptureWaveOuterRadiusFactor: CGFloat = 0.30
+    private let hexfectionCaptureWaveInnerRadiusFactor: CGFloat = 0.08
+    private let hexfectionCaptureWaveHeight: CGFloat = 0.06
+    private let hexfectionCaptureWaveThickness: CGFloat = 0.12
+    private let hexfectionCaptureWaveLayerCount: Int = 5
+    private let hexfectionCaptureFadeDuration: TimeInterval = 0.3
     private let hexfectionLeapArcHeight: Float = 0.8
     private var isHexpandExploding = false
     private let hexpandMaxLevel = 6
@@ -104,6 +147,7 @@ final class GameSceneController: NSObject {
     private let hexpandPrimedSpacingDelta: CGFloat = 0.1
     private let hexpandPrimedPulsePeriod: TimeInterval = 1.0
     private var currentPlayer: TileState = .red
+    private let nodeCoordTagPrefix = "|coord:"
     private var aiDifficulty: AIDifficulty = .hard
     private var aiMoveScheduled = false
     var onTurnUpdate: ((TileState) -> Void)?
@@ -214,11 +258,46 @@ final class GameSceneController: NSObject {
             return
         }
 
-        if let hitNode = hits.first?.node,
-           let q = hitNode.value(forKey: "q") as? Int,
-           let r = hitNode.value(forKey: "r") as? Int {
-            applyMove(at: AxialCoord(q: q, r: r))
+        if let coord = coordFromNode(hits.first?.node) {
+            applyMove(at: coord)
         }
+    }
+
+    private func coordFromNode(_ startNode: SCNNode?) -> AxialCoord? {
+        var current = startNode
+        while let node = current {
+            if let coord = coordFromNodeName(node.name) {
+                return coord
+            }
+            if let tile = node as? HexTileNode {
+                return tile.coord
+            }
+            current = node.parent
+        }
+        return nil
+    }
+
+    private func coordFromNodeName(_ name: String?) -> AxialCoord? {
+        guard let name else { return nil }
+        guard let range = name.range(of: nodeCoordTagPrefix) else { return nil }
+        let payload = name[range.upperBound...]
+        let parts = payload.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let q = Int(parts[0]),
+              let r = Int(parts[1]) else {
+            return nil
+        }
+        return AxialCoord(q: q, r: r)
+    }
+
+    private func setNodeCoordMetadata(_ node: SCNNode, coord: AxialCoord) {
+        let baseName: String
+        if let name = node.name, let range = name.range(of: nodeCoordTagPrefix) {
+            baseName = String(name[..<range.lowerBound])
+        } else {
+            baseName = node.name ?? ""
+        }
+        node.name = "\(baseName)\(nodeCoordTagPrefix)\(coord.q),\(coord.r)"
     }
 
     private var canAcceptHumanInput: Bool {
@@ -287,6 +366,7 @@ final class GameSceneController: NSObject {
             onMessageUpdate?("")
             updateScores()
         }
+        refreshHexelloMoveHighlights()
     }
 
     private func setupInitialRing() {
@@ -334,6 +414,7 @@ final class GameSceneController: NSObject {
         guard tileStates[coord] == .empty else { return }
         let flipLines = flipLinesForMove(at: coord, player: currentPlayer)
         guard !flipLines.isEmpty else { return }
+        clearHexelloMoveHighlights(animated: false)
         isAnimatingMove = true
         tileStates[coord] = currentPlayer
         tileNodes[coord]?.animatePlacement(to: currentPlayer) { [weak self] in
@@ -441,6 +522,120 @@ final class GameSceneController: NSObject {
         hexfectionCloneTargets = targets.clone
         hexfectionLeapTargets = targets.leap
         refreshHexfectionTileHighlights()
+        playRaise()
+    }
+
+    private func refreshHexelloMoveHighlights() {
+        guard gameMode == .hexello else {
+            clearHexelloMoveHighlights(animated: false)
+            return
+        }
+        guard !isGameOver, !isAnimatingMove, canAcceptHumanInput else {
+            clearHexelloMoveHighlights()
+            return
+        }
+
+        let moves = Set(legalMoves(for: currentPlayer))
+        clearHexelloMoveHighlights()
+        guard !moves.isEmpty else { return }
+
+        let baseColor = HexTileNode.hexelloTileBaseColor()
+        let playerColor = HexTileNode.hexelloColor(for: currentPlayer)
+        let tintColor = interpolateColor(from: baseColor, to: playerColor, t: hexelloMoveTileTintBlend)
+
+        for coord in moves {
+            guard tileStates[coord] == .empty, let tile = tileNodes[coord] else { continue }
+            let borderNode = makeHexelloMoveBorderNode(for: coord, matching: tile)
+            borderNode.opacity = 0
+            let borderFadeIn = SCNAction.fadeIn(duration: hexelloMoveHighlightDuration)
+            borderFadeIn.timingMode = .easeInEaseOut
+            borderNode.runAction(borderFadeIn, forKey: "hexelloMoveHintBorderFade")
+            boardNode.addChildNode(borderNode)
+            tile.removeAction(forKey: "hexelloMoveHintScale")
+            let scale = SCNAction.scale(to: CGFloat(hexelloMoveHighlightScale), duration: hexelloMoveHighlightDuration)
+            scale.timingMode = .easeInEaseOut
+            tile.runAction(scale, forKey: "hexelloMoveHintScale")
+            tile.animateTintColor(to: tintColor, duration: hexelloMoveHighlightDuration)
+        }
+    }
+
+    private func clearHexelloMoveHighlights(animated: Bool = true) {
+        let duration = animated ? hexelloMoveHighlightDuration : 0
+        let borderNodes = boardNode.childNodes.filter { node in
+            guard let name = node.name else { return false }
+            return name.hasPrefix(hexelloMoveHintBorderBaseName)
+        }
+        for borderNode in borderNodes {
+            borderNode.removeAction(forKey: "hexelloMoveHintBorderFade")
+            if duration > 0 {
+                let fadeOut = SCNAction.fadeOut(duration: duration)
+                fadeOut.timingMode = .easeInEaseOut
+                let remove = SCNAction.removeFromParentNode()
+                borderNode.runAction(.sequence([fadeOut, remove]), forKey: "hexelloMoveHintBorderFade")
+            } else {
+                borderNode.removeFromParentNode()
+            }
+        }
+
+        for (coord, tile) in tileNodes {
+            tile.removeAction(forKey: "hexelloMoveHintScale")
+            if duration > 0 {
+                let scale = SCNAction.scale(to: 1.0, duration: duration)
+                scale.timingMode = .easeInEaseOut
+                tile.runAction(scale, forKey: "hexelloMoveHintScale")
+                if let state = tileStates[coord] {
+                    tile.animateState(to: state, duration: duration)
+                }
+            } else {
+                tile.scale = SCNVector3(1, 1, 1)
+                if let state = tileStates[coord] {
+                    tile.setState(state)
+                }
+            }
+        }
+    }
+
+    private func makeHexelloMoveBorderNode(for coord: AxialCoord, matching tile: HexTileNode) -> SCNNode {
+        let node = SCNNode(geometry: hexelloMoveHintBorderGeometry.copy() as? SCNGeometry ?? hexelloMoveHintBorderGeometry)
+        let borderHalfHeight = Float(tileHeight * CGFloat(hexelloMoveBorderThicknessScale) * 0.5)
+        let verticalOffset = Float(tileHeight * 0.5) - hexelloMoveBorderTopInset - borderHalfHeight
+        node.position = SCNVector3(tile.position.x, tile.position.y + verticalOffset, tile.position.z)
+        node.eulerAngles.x = -.pi / 2
+        node.scale = SCNVector3(1, 1, hexelloMoveBorderThicknessScale)
+        node.castsShadow = false
+        node.renderingOrder = -1
+        node.name = hexelloMoveHintBorderBaseName
+        setNodeCoordMetadata(node, coord: coord)
+        return node
+    }
+
+    private func makeHexelloMoveHintBorderGeometry() -> SCNGeometry {
+        let path = UIBezierPath()
+        for index in 0..<6 {
+            let angle = CGFloat(index) * .pi / 3 - .pi / 2
+            let point = CGPoint(x: cos(angle) * tileSize, y: sin(angle) * tileSize)
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        path.close()
+
+        let shape = SCNShape(path: path, extrusionDepth: tileHeight)
+        shape.chamferRadius = tileHeight * 0.6
+
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor(white: 0.94, alpha: 1.0)
+        material.emission.contents = UIColor.black
+        material.emission.intensity = 0
+        material.lightingModel = .physicallyBased
+        material.metalness.contents = 0
+        material.roughness.contents = 1.0
+        material.specular.contents = UIColor(white: 0.08, alpha: 1.0)
+        material.isDoubleSided = false
+        shape.materials = [material]
+        return shape
     }
 
     private func clearHexfectionSelectionState(resetPieceTransforms: Bool = true) {
@@ -477,7 +672,6 @@ final class GameSceneController: NSObject {
             self.movesMade += 1
             self.onTurnCountUpdate?(self.movesMade)
             self.updateScores()
-            self.playPlace()
             if capturedAny {
                 DispatchQueue.main.asyncAfter(deadline: .now() + self.hexfectionCaptureAnimationDuration) { [weak self] in
                     self?.advanceTurn()
@@ -550,8 +744,7 @@ final class GameSceneController: NSObject {
         } else {
             sourcePiece = makeHexfectionPieceNode(owner: owner)
             sourcePiece.position = SCNVector3(sourceTile.position.x, hexfectionPieceBaseY, sourceTile.position.z)
-            sourcePiece.setValue(source.q, forKey: "q")
-            sourcePiece.setValue(source.r, forKey: "r")
+            setNodeCoordMetadata(sourcePiece, coord: source)
             boardNode.addChildNode(sourcePiece)
             hexfectionPieceNodes[source] = sourcePiece
         }
@@ -582,6 +775,8 @@ final class GameSceneController: NSObject {
         let travelerFactor = max(0.01, traveler.scale.x / hexfectionPieceDiameterScale)
         let halfFactor: Float = 0.5
 
+        playSplit()
+
         let sourceSplitMove = SCNAction.move(to: sourceSplit, duration: splitDuration)
         sourceSplitMove.timingMode = .easeInEaseOut
         let travelerSplitMove = SCNAction.move(to: travelerSplit, duration: splitDuration)
@@ -607,14 +802,13 @@ final class GameSceneController: NSObject {
         )
 
         let finish = SCNAction.run { [weak self] _ in
+            guard let self else { return }
             sourcePiece.position = originCenter
-            sourcePiece.setValue(source.q, forKey: "q")
-            sourcePiece.setValue(source.r, forKey: "r")
+            self.setNodeCoordMetadata(sourcePiece, coord: source)
             traveler.position = destinationCenter
-            traveler.setValue(destination.q, forKey: "q")
-            traveler.setValue(destination.r, forKey: "r")
-            Task { @MainActor [weak self] in
-                self?.hexfectionPieceNodes[destination] = traveler
+            self.setNodeCoordMetadata(traveler, coord: destination)
+            Task { @MainActor in
+                self.hexfectionPieceNodes[destination] = traveler
                 completion()
             }
         }
@@ -677,33 +871,43 @@ final class GameSceneController: NSObject {
         let flip = SCNAction.customAction(duration: duration) { node, elapsed in
             let t = max(0, min(1, Float(elapsed / duration)))
             let eased = t * t * (3 - 2 * t)
-            let rotation = self.quaternion(axis: effectiveFlipAxis, angle: .pi * eased)
+            let rotation = self.quaternion(axis: effectiveFlipAxis, angle: -.pi * eased)
             node.orientation = self.multiplyQuaternions(rotation, startOrientation)
         }
         let finish = SCNAction.run { [weak self] _ in
+            guard let self else { return }
             movingPiece.position = end
-            movingPiece.setValue(destination.q, forKey: "q")
-            movingPiece.setValue(destination.r, forKey: "r")
-            Task { @MainActor [weak self] in
-                self?.hexfectionPieceNodes[destination] = movingPiece
+            self.setNodeCoordMetadata(movingPiece, coord: destination)
+            Task { @MainActor in
+                self.hexfectionPieceNodes[destination] = movingPiece
                 completion()
             }
         }
+        playJump()
         movingPiece.runAction(.sequence([.group([arc, flip]), finish]), forKey: "hexfectionLeapTravel")
     }
 
     private func captureHexfectionAdjacents(around coord: AxialCoord, owner: TileState) -> Bool {
         let opponent = owner.opposite
-        var capturedAny = false
+        var capturedNeighbors: [AxialCoord] = []
         for direction in HexGrid.directions {
             let neighbor = coord.adding(direction)
             guard tileStates[neighbor] == opponent else { continue }
-            capturedAny = true
+            capturedNeighbors.append(neighbor)
             tileStates[neighbor] = owner
-            tileNodes[neighbor]?.animateState(to: owner, duration: 0.22)
-            animateHexfectionPieceOwnershipChange(at: neighbor, to: owner)
         }
-        return capturedAny
+        guard !capturedNeighbors.isEmpty else { return false }
+
+        let transitionDelays = animateHexfectionCaptureWave(from: coord, to: capturedNeighbors, owner: owner)
+        for target in capturedNeighbors {
+            let delay = transitionDelays[target] ?? 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.tileNodes[target]?.animateState(to: owner, duration: self.hexfectionCaptureFadeDuration)
+                self.animateHexfectionPieceOwnershipChange(at: target, to: owner)
+            }
+        }
+        return true
     }
 
     private func refreshHexfectionTileHighlights() {
@@ -858,14 +1062,137 @@ final class GameSceneController: NSObject {
 
         piece.removeAction(forKey: "hexfectionCapture")
         let targetColor = HexTileNode.hexfectionPieceColor(for: owner)
-        let currentFactor = max(0.05, piece.scale.x / hexfectionPieceDiameterScale)
-        let minFactor: Float = 0.05
-        let shrink = squashedPieceScaleAction(from: currentFactor, to: minFactor, duration: 0.5)
-        let recolor = SCNAction.run { [weak piece] _ in
+        let startColor = resolvedColor(from: piece.geometry?.firstMaterial?.diffuse.contents)
+            ?? targetColor
+        let fade = SCNAction.customAction(duration: hexfectionCaptureFadeDuration) { node, elapsed in
+            guard let material = node.geometry?.firstMaterial else { return }
+            let t = max(0, min(1, CGFloat(elapsed / self.hexfectionCaptureFadeDuration)))
+            let eased = t * t * (3 - 2 * t)
+            material.diffuse.contents = self.interpolateColor(from: startColor, to: targetColor, t: eased)
+        }
+        let finish = SCNAction.run { [weak piece] _ in
             piece?.geometry?.firstMaterial?.diffuse.contents = targetColor
         }
-        let grow = squashedPieceScaleAction(from: minFactor, to: 1.0, duration: 0.5)
-        piece.runAction(.sequence([shrink, recolor, grow]), forKey: "hexfectionCapture")
+        piece.runAction(.sequence([fade, finish]), forKey: "hexfectionCapture")
+    }
+
+    private func animateHexfectionCaptureWave(from source: AxialCoord, to targets: [AxialCoord], owner: TileState) -> [AxialCoord: TimeInterval] {
+        guard !targets.isEmpty else { return [:] }
+        guard let sourceTile = tileNodes[source] else { return [:] }
+
+        let sourcePosition: SCNVector3
+        if let sourcePiece = hexfectionPieceNodes[source] {
+            sourcePosition = sourcePiece.presentation.position
+        } else {
+            sourcePosition = SCNVector3(sourceTile.position.x, hexfectionPieceBaseY, sourceTile.position.z)
+        }
+
+        var targetDistances: [AxialCoord: Float] = [:]
+        var maxDistance: Float = 0.0001
+        for target in targets {
+            guard let targetTile = tileNodes[target] else { continue }
+            let targetPosition = SCNVector3(targetTile.position.x, hexfectionPieceBaseY, targetTile.position.z)
+            let dx = targetPosition.x - sourcePosition.x
+            let dz = targetPosition.z - sourcePosition.z
+            let distance = sqrt((dx * dx) + (dz * dz))
+            targetDistances[target] = distance
+            maxDistance = max(maxDistance, distance)
+        }
+
+        let sourceColor = resolvedColor(from: hexfectionPieceNodes[source]?.geometry?.firstMaterial?.diffuse.contents)
+            ?? HexTileNode.hexfectionPieceColor(for: owner)
+        let outerRadius = max(0.04, tileSize * hexfectionCaptureWaveOuterRadiusFactor)
+        let waveDiameter = outerRadius * 2
+        let ringContainer = SCNNode()
+        ringContainer.name = "hexfectionCaptureWaveContainer"
+        ringContainer.position = SCNVector3(sourcePosition.x, sourcePosition.y, sourcePosition.z)
+        ringContainer.scale = SCNVector3(0.22, 1.0, 0.22)
+        ringContainer.opacity = 0
+
+        let layerCount = max(1, hexfectionCaptureWaveLayerCount)
+        let thickness = max(0.01, hexfectionCaptureWaveThickness)
+        let layerSpacing = thickness / CGFloat(layerCount)
+        let layerStart = -thickness * 0.5
+        let waveTexture = makeHexfectionCaptureWaveTexture(color: sourceColor)
+        for index in 0..<layerCount {
+            let ring = SCNPlane(width: waveDiameter, height: waveDiameter)
+            let material = SCNMaterial()
+            material.lightingModel = .constant
+            material.diffuse.contents = waveTexture
+            material.emission.contents = waveTexture
+            material.isDoubleSided = true
+            material.blendMode = .add
+            material.readsFromDepthBuffer = false
+            material.writesToDepthBuffer = false
+            ring.materials = [material]
+
+            let layerNode = SCNNode(geometry: ring)
+            layerNode.name = "hexfectionCaptureWaveLayer"
+            layerNode.eulerAngles.x = -.pi / 2
+            let yOffset = layerStart + (layerSpacing * (CGFloat(index) + 0.5))
+            layerNode.position = SCNVector3(0, Float(yOffset), 0)
+            ringContainer.addChildNode(layerNode)
+        }
+        boardNode.addChildNode(ringContainer)
+
+        let endScale = max(1.35, ((CGFloat(maxDistance) / outerRadius) + 0.75) * 1.38)
+        let waveExpand = SCNAction.customAction(duration: hexfectionCaptureWaveDuration) { node, elapsed in
+            let t = max(0, min(1, CGFloat(elapsed / self.hexfectionCaptureWaveDuration)))
+            let eased = t * t * (3 - 2 * t)
+            let scale = 0.22 + ((endScale - 0.22) * eased)
+            node.scale = SCNVector3(Float(scale), 1.0, Float(scale))
+            let fade = max(0.0, 1.0 - (eased * eased))
+            node.opacity = CGFloat(0.95 * fade)
+        }
+        let playTakeover = SCNAction.run { [weak self] _ in
+            self?.playTakeover()
+        }
+        ringContainer.runAction(
+            .sequence([.wait(duration: hexfectionCaptureWaveLeadDelay), playTakeover, waveExpand, .removeFromParentNode()]),
+            forKey: "hexfectionCaptureWave"
+        )
+
+        var delays: [AxialCoord: TimeInterval] = [:]
+        let transitionWindowStart = max(0.0, hexfectionCaptureWaveDuration - 0.6)
+        let transitionWindowRange = max(0.0, 0.6 - hexfectionCaptureFadeDuration)
+        for (target, distance) in targetDistances {
+            let progress = maxDistance > 0.0001 ? (distance / maxDistance) : 0.5
+            delays[target] = hexfectionCaptureWaveLeadDelay + transitionWindowStart + (transitionWindowRange * TimeInterval(progress))
+        }
+        return delays
+    }
+
+    private func makeHexfectionCaptureWaveTexture(color: UIColor) -> UIImage {
+        let size: CGFloat = 256
+        let innerFraction = max(0.2, min(0.85, hexfectionCaptureWaveInnerRadiusFactor / hexfectionCaptureWaveOuterRadiusFactor))
+        let innerClearEnd = innerFraction * 0.9
+        let rampMid = min(0.9, innerFraction + ((1.0 - innerFraction) * 0.55))
+        let brightEdge = min(0.98, rampMid + 0.2)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        return renderer.image { context in
+            let cg = context.cgContext
+            let center = CGPoint(x: size * 0.5, y: size * 0.5)
+            let radius = size * 0.5
+            let colors = [
+                color.withAlphaComponent(0.0).cgColor,
+                color.withAlphaComponent(0.0).cgColor,
+                color.withAlphaComponent(0.42).cgColor,
+                color.withAlphaComponent(1.0).cgColor,
+                color.withAlphaComponent(0.0).cgColor
+            ] as CFArray
+            let locations: [CGFloat] = [0.0, innerClearEnd, rampMid, brightEdge, 1.0]
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: locations) else {
+                return
+            }
+            cg.drawRadialGradient(
+                gradient,
+                startCenter: center,
+                startRadius: 0,
+                endCenter: center,
+                endRadius: radius,
+                options: [.drawsAfterEndLocation]
+            )
+        }
     }
 
     private func squashedPieceScaleAction(from start: Float, to end: Float, duration: TimeInterval) -> SCNAction {
@@ -881,6 +1208,13 @@ final class GameSceneController: NSObject {
                 self.hexfectionPieceDiameterScale * factor
             )
         }
+    }
+
+    private func resolvedColor(from contents: Any?) -> UIColor? {
+        if let color = contents as? UIColor {
+            return color
+        }
+        return nil
     }
 
     private func crossProduct(_ lhs: SCNVector3, _ rhs: SCNVector3) -> SCNVector3 {
@@ -952,8 +1286,7 @@ final class GameSceneController: NSObject {
             hexfectionPieceBaseY,
             tile.position.z
         )
-        piece.setValue(coord.q, forKey: "q")
-        piece.setValue(coord.r, forKey: "r")
+        setNodeCoordMetadata(piece, coord: coord)
         boardNode.addChildNode(piece)
         hexfectionPieceNodes[coord] = piece
 
@@ -1038,6 +1371,14 @@ final class GameSceneController: NSObject {
 
         let burstDuration: TimeInterval = 0.7
         let explosionOwner = tileStates[coord] ?? currentPlayer
+        let levelBefore = hexpandLevels[coord] ?? 0
+        let burstCount = max(0, levelBefore / hexpandMaxLevel)
+        let remainder = max(0, levelBefore % hexpandMaxLevel)
+        guard burstCount > 0, explosionOwner != .empty else {
+            isHexpandExploding = false
+            processNextHexpandExplosionIfNeeded()
+            return
+        }
         spawnHexpandBurst(from: coord, owner: explosionOwner, duration: burstDuration)
         playPop()
 
@@ -1048,15 +1389,21 @@ final class GameSceneController: NSObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + burstDuration) { [weak self] in
             guard let self else { return }
-            self.tileStates[coord] = .empty
-            self.hexpandLevels[coord] = 0
-            self.updateHexpandTile(coord: coord, level: 0, owner: .empty, duration: 0.4)
+            if remainder > 0 {
+                self.tileStates[coord] = explosionOwner
+                self.hexpandLevels[coord] = remainder
+                self.updateHexpandTile(coord: coord, level: remainder, owner: explosionOwner, duration: 0.4)
+            } else {
+                self.tileStates[coord] = .empty
+                self.hexpandLevels[coord] = 0
+                self.updateHexpandTile(coord: coord, level: 0, owner: .empty, duration: 0.4)
+            }
 
             for neighbor in neighbors {
-                let level = (self.hexpandLevels[neighbor] ?? 0) + 1
-                self.tileStates[neighbor] = self.currentPlayer
-                self.hexpandLevels[neighbor] = min(level, self.hexpandMaxLevel)
-                self.updateHexpandTile(coord: neighbor, level: min(level, self.hexpandMaxLevel), owner: self.currentPlayer, duration: 0.3)
+                let level = (self.hexpandLevels[neighbor] ?? 0) + burstCount
+                self.tileStates[neighbor] = explosionOwner
+                self.hexpandLevels[neighbor] = level
+                self.updateHexpandTile(coord: neighbor, level: level, owner: explosionOwner, duration: 0.3)
 
                 if level >= self.hexpandMaxLevel {
                     self.enqueueHexpandExplosion(neighbor)
@@ -1117,8 +1464,7 @@ final class GameSceneController: NSObject {
             ball.position = position
             ball.scale = SCNVector3(0.01, 0.01, 0.01)
             ball.name = "hexpandBall"
-            ball.setValue(coord.q, forKey: "q")
-            ball.setValue(coord.r, forKey: "r")
+            setNodeCoordMetadata(ball, coord: coord)
             boardNode.addChildNode(ball)
             balls.append(ball)
 
@@ -1337,6 +1683,7 @@ final class GameSceneController: NSObject {
         aiRedEnabled = redAI
         aiBlueEnabled = blueAI
         performAITurnIfNeeded()
+        refreshHexelloMoveHighlights()
     }
 
     func setBoardSize(_ sideLength: Int) {
@@ -1346,6 +1693,9 @@ final class GameSceneController: NSObject {
     func setGameMode(_ mode: GameMode) {
         if gameMode != mode {
             clearHexfectionSelectionState()
+            if gameMode == .hexello {
+                clearHexelloMoveHighlights(animated: false)
+            }
         }
         gameMode = mode
     }
@@ -1387,7 +1737,29 @@ final class GameSceneController: NSObject {
         boardNode.removeAction(forKey: "gameOverSpin")
     }
 
+    func prepareForMenuReturn() {
+        aiComputationToken = UUID()
+        aiMoveScheduled = false
+        startAIOnIntroComplete = false
+        introCompleted = false
+        isAnimatingMove = false
+        isHexpandExploding = false
+        angularVelocityYaw = 0
+        angularVelocityPitch = 0
+        displayLink?.invalidate()
+        displayLink = nil
+        cameraNode.removeAction(forKey: "initialZoom")
+        cameraNode.removeAction(forKey: "gameOverZoom")
+        tiltNode.removeAllActions()
+        boardNode.removeAction(forKey: "gameOverSpin")
+        boardNode.removeAllActions()
+        for node in boardNode.childNodes {
+            node.removeAllActions()
+        }
+    }
+
     func startNewGame() {
+        prepareForMenuReturn()
         currentPlayer = .red
         onTurnUpdate?(currentPlayer)
         onMessageUpdate?("")
@@ -1401,6 +1773,7 @@ final class GameSceneController: NSObject {
             self.onActiveUpdate?(self.currentPlayer)
             self.onMessageUpdate?(self.gameMode == .hexfection ? "Select one of your tiles" : "")
             self.updateScores()
+            self.refreshHexelloMoveHighlights()
         }
     }
 
@@ -1411,6 +1784,10 @@ final class GameSceneController: NSObject {
     private func advanceTurn() {
         if gameMode == .hexfection {
             clearHexfectionSelectionState()
+            if checkForHexfectionEliminationWinIfNeeded() {
+                refreshHexelloMoveHighlights()
+                return
+            }
         }
         currentPlayer = currentPlayer.opposite
         onTurnUpdate?(currentPlayer)
@@ -1423,7 +1800,34 @@ final class GameSceneController: NSObject {
             onMessageUpdate?("")
         }
         isAnimatingMove = false
+        refreshHexelloMoveHighlights()
         performAITurnIfNeeded()
+    }
+
+    private func checkForHexfectionEliminationWinIfNeeded() -> Bool {
+        guard gameMode == .hexfection else { return false }
+        guard !isGameOver else { return false }
+
+        let (redCount, blueCount) = tileOwnershipTotals()
+        if redCount == 0, blueCount > 0 {
+            return finalizeHexfectionElimination(eliminated: .red, winner: .blue)
+        }
+        if blueCount == 0, redCount > 0 {
+            return finalizeHexfectionElimination(eliminated: .blue, winner: .red)
+        }
+        return false
+    }
+
+    private func finalizeHexfectionElimination(eliminated: TileState, winner: TileState) -> Bool {
+        let eliminatedMessage = eliminated == .red ? "Red has been eliminated" : "Blue has been eliminated"
+        let winnerMessage = winner == .red ? "Red wins" : "Blue wins"
+        onMessageUpdate?(eliminatedMessage)
+        onGameOver?(eliminatedMessage, winnerMessage)
+        isGameOver = true
+        isAnimatingMove = false
+        aiMoveScheduled = false
+        clearHexfectionSelectionState()
+        return true
     }
 
     private func checkForNoMoves() {
@@ -1438,6 +1842,7 @@ final class GameSceneController: NSObject {
                 let (_, winner) = gameOverMessage()
                 onGameOver?("No Moves Possible", winner)
                 isGameOver = true
+                clearHexelloMoveHighlights()
             }
         } else {
             onMessageUpdate?("")
@@ -2123,6 +2528,17 @@ final class GameSceneController: NSObject {
         let riskyBurstPenalty: Double
     }
 
+    private struct HexpandTacticalCacheKey: Hashable {
+        let boardHash: Int
+        let playerValue: Int
+        let depth: Int
+    }
+
+    private struct HexpandTacticalCacheEntry {
+        let depth: Int
+        let score: Double
+    }
+
     private let largeHardHexpandWeights = HexpandEvolvedWeights(
         bias: 0.383594,
         scoreDiff: 1.306195,
@@ -2219,6 +2635,353 @@ final class GameSceneController: NSObject {
         return bestMoves.randomElement()
     }
 
+    private func bestHexpandTacticalMove(for player: TileState, depth: Int, in state: HexpandState) -> AxialCoord? {
+        let legalMoves = orderedHexpandTacticalMoves(for: player, in: state)
+        guard !legalMoves.isEmpty else { return nil }
+
+        let maxDepth = max(1, depth)
+        let deadline = Date().timeIntervalSinceReferenceDate + tacticalSearchBudgetSeconds(in: state)
+        let rootLimit = tacticalRootMoveLimit(in: state)
+        var movePriority = legalMoves
+        if movePriority.count > rootLimit {
+            movePriority = Array(movePriority.prefix(rootLimit))
+        }
+        var bestMove = movePriority.first
+
+        for currentDepth in 1...maxDepth {
+            if Date().timeIntervalSinceReferenceDate >= deadline { break }
+            var alpha = -Double.greatestFiniteMagnitude
+            let beta = Double.greatestFiniteMagnitude
+            var localBestMove: AxialCoord?
+            var localBestScore = -Double.greatestFiniteMagnitude
+            var scoredMoves: [(move: AxialCoord, score: Double)] = []
+            var timedOut = false
+            var cache: [HexpandTacticalCacheKey: HexpandTacticalCacheEntry] = [:]
+
+            for move in movePriority {
+                if Date().timeIntervalSinceReferenceDate >= deadline {
+                    timedOut = true
+                    break
+                }
+                let next = simulateHexpandMove(at: move, player: player, in: state)
+                let score = tacticalSearchHexpand(
+                    state: next,
+                    player: player.opposite,
+                    maximizingFor: player,
+                    depth: currentDepth - 1,
+                    alpha: alpha,
+                    beta: beta,
+                    deadline: deadline,
+                    timedOut: &timedOut,
+                    cache: &cache
+                )
+                if timedOut { break }
+                scoredMoves.append((move: move, score: score))
+                if score > localBestScore {
+                    localBestScore = score
+                    localBestMove = move
+                }
+                alpha = max(alpha, localBestScore)
+            }
+
+            if !timedOut, let localBestMove {
+                bestMove = localBestMove
+                movePriority = scoredMoves
+                    .sorted { lhs, rhs in
+                        if lhs.score != rhs.score { return lhs.score > rhs.score }
+                        if lhs.move.q != rhs.move.q { return lhs.move.q < rhs.move.q }
+                        return lhs.move.r < rhs.move.r
+                    }
+                    .map(\.move)
+            } else {
+                break
+            }
+        }
+
+        return bestMove
+    }
+
+    private func tacticalSearchHexpand(
+        state: HexpandState,
+        player: TileState,
+        maximizingFor: TileState,
+        depth: Int,
+        alpha: Double,
+        beta: Double,
+        deadline: TimeInterval,
+        timedOut: inout Bool,
+        cache: inout [HexpandTacticalCacheKey: HexpandTacticalCacheEntry]
+    ) -> Double {
+        if timedOut || Date().timeIntervalSinceReferenceDate >= deadline {
+            timedOut = true
+            return evaluateHexpandTactical(state: state, for: maximizingFor)
+        }
+
+        if let terminal = terminalHexpandScore(state: state, for: maximizingFor, depth: depth) {
+            return Double(terminal)
+        }
+        if depth <= 0 {
+            return evaluateHexpandTactical(state: state, for: maximizingFor)
+        }
+
+        let key = HexpandTacticalCacheKey(
+            boardHash: hashHexpandState(state),
+            playerValue: tileStateCode(player),
+            depth: depth
+        )
+        if let cached = cache[key], cached.depth >= depth {
+            return cached.score
+        }
+
+        var moves = orderedHexpandTacticalMoves(for: player, in: state)
+        if moves.isEmpty {
+            let score = evaluateHexpandTactical(state: state, for: maximizingFor)
+            cache[key] = HexpandTacticalCacheEntry(depth: depth, score: score)
+            return score
+        }
+        let limit = tacticalBranchLimit(depth: depth, totalMoves: moves.count, in: state)
+        if moves.count > limit {
+            moves = Array(moves.prefix(limit))
+        }
+
+        let maximizingTurn = player == maximizingFor
+        var localAlpha = alpha
+        var localBeta = beta
+        var best = maximizingTurn ? -Double.greatestFiniteMagnitude : Double.greatestFiniteMagnitude
+
+        for move in moves {
+            if Date().timeIntervalSinceReferenceDate >= deadline {
+                timedOut = true
+                break
+            }
+            let next = simulateHexpandMove(at: move, player: player, in: state)
+            let score = tacticalSearchHexpand(
+                state: next,
+                player: player.opposite,
+                maximizingFor: maximizingFor,
+                depth: depth - 1,
+                alpha: localAlpha,
+                beta: localBeta,
+                deadline: deadline,
+                timedOut: &timedOut,
+                cache: &cache
+            )
+
+            if maximizingTurn {
+                best = max(best, score)
+                localAlpha = max(localAlpha, best)
+            } else {
+                best = min(best, score)
+                localBeta = min(localBeta, best)
+            }
+            if localAlpha >= localBeta || timedOut {
+                break
+            }
+        }
+
+        if !timedOut {
+            cache[key] = HexpandTacticalCacheEntry(depth: depth, score: best)
+            return best
+        }
+        return evaluateHexpandTactical(state: state, for: maximizingFor)
+    }
+
+    private func orderedHexpandTacticalMoves(for player: TileState, in state: HexpandState) -> [AxialCoord] {
+        let moves = orderedHexpandMoves(for: player, in: state)
+        guard !moves.isEmpty else { return [] }
+        let playerBefore = summarizeHexpandPolicy(state: state, for: player)
+        let opponentBefore = summarizeHexpandPolicy(state: state, for: player.opposite)
+        let playerTacticalBefore = summarizeHexpandTactical(state: state, for: player)
+
+        return moves.sorted { lhs, rhs in
+            let lhsScore = tacticalOrderingScore(
+                move: lhs,
+                player: player,
+                in: state,
+                playerBefore: playerBefore,
+                opponentBefore: opponentBefore,
+                playerTacticalBefore: playerTacticalBefore
+            )
+            let rhsScore = tacticalOrderingScore(
+                move: rhs,
+                player: player,
+                in: state,
+                playerBefore: playerBefore,
+                opponentBefore: opponentBefore,
+                playerTacticalBefore: playerTacticalBefore
+            )
+            if lhsScore != rhsScore { return lhsScore > rhsScore }
+            if lhs.q != rhs.q { return lhs.q < rhs.q }
+            return lhs.r < rhs.r
+        }
+    }
+
+    private func tacticalOrderingScore(
+        move: AxialCoord,
+        player: TileState,
+        in state: HexpandState,
+        playerBefore: HexpandPolicySummary,
+        opponentBefore: HexpandPolicySummary,
+        playerTacticalBefore: HexpandTacticalSummary
+    ) -> Double {
+        let next = simulateHexpandMove(at: move, player: player, in: state)
+        if isWinningHexpandState(next, for: player) {
+            return 1_000_000
+        }
+        let evolvedScore = scoreHexpandEvolvedMove(
+            move,
+            player: player,
+            in: state,
+            playerBefore: playerBefore,
+            opponentBefore: opponentBefore,
+            playerTacticalBefore: playerTacticalBefore
+        )
+        let opponentImmediate = countImmediateHexpandWins(for: player.opposite, in: next, maxChecks: 10)
+        var score = evolvedScore - (Double(opponentImmediate) * 250.0)
+        let ownerBefore = state.owners[move] ?? .empty
+        if ownerBefore == .empty {
+            let support = emptyMoveSupportScore(at: move, player: player, in: state)
+            let earlyWeight = isEarlyHexpandPhase(state) ? 22.0 : 8.0
+            score += support * earlyWeight
+            if support < 0 {
+                score += support * (isEarlyHexpandPhase(state) ? 28.0 : 10.0)
+            }
+        }
+        return score
+    }
+
+    private func evaluateHexpandTactical(state: HexpandState, for player: TileState) -> Double {
+        let opponent = player.opposite
+        let playerPolicy = summarizeHexpandPolicy(state: state, for: player)
+        let opponentPolicy = summarizeHexpandPolicy(state: state, for: opponent)
+        let playerTactical = summarizeHexpandTactical(state: state, for: player)
+        let opponentTactical = summarizeHexpandTactical(state: state, for: opponent)
+
+        let scoreDiff = playerPolicy.score - opponentPolicy.score
+        let pieceDiff = playerPolicy.pieces - opponentPolicy.pieces
+        let criticalDiff = playerPolicy.critical - opponentPolicy.critical
+        let edgeDiff = playerPolicy.edgeLoad - opponentPolicy.edgeLoad
+        let centerDiff = playerPolicy.centerControl - opponentPolicy.centerControl
+        let nearCriticalDiff = playerTactical.nearCritical - opponentTactical.nearCritical
+        let chainDiff = playerTactical.criticalChains - opponentTactical.criticalChains
+        let exposedDiff = playerTactical.exposedCriticalPairs - opponentTactical.exposedCriticalPairs
+        let immediateWins = countImmediateHexpandWins(for: player, in: state, maxChecks: 10)
+        let opponentImmediateWins = countImmediateHexpandWins(for: opponent, in: state, maxChecks: 10)
+
+        var score = largeHardHexpandWeights.bias
+        score += largeHardHexpandWeights.scoreDiff * Double(scoreDiff)
+        score += largeHardHexpandWeights.pieceDiff * Double(pieceDiff)
+        score += largeHardHexpandWeights.criticalDiff * Double(criticalDiff)
+        score += largeHardHexpandWeights.edgeDiff * Double(edgeDiff)
+        score += largeHardHexpandWeights.centerDiff * Double(centerDiff)
+        score += hardHexpandTacticalWeights.nearCriticalGain * Double(nearCriticalDiff)
+        score += hardHexpandTacticalWeights.chainGain * Double(chainDiff)
+        score -= hardHexpandTacticalWeights.exposedCriticalPenalty * Double(exposedDiff)
+        score += Double(immediateWins) * 120.0
+        score -= Double(opponentImmediateWins) * 180.0
+        return score
+    }
+
+    private func tacticalBranchLimit(depth: Int, totalMoves: Int, in state: HexpandState) -> Int {
+        let early = isEarlyHexpandPhase(state)
+        if sideLength >= 6 {
+            if early {
+                if depth >= 4 { return min(totalMoves, 8) }
+                if depth >= 2 { return min(totalMoves, 7) }
+                return min(totalMoves, 6)
+            }
+            if depth >= 4 { return min(totalMoves, 10) }
+            if depth >= 2 { return min(totalMoves, 9) }
+            return min(totalMoves, 7)
+        }
+        if early {
+            if depth >= 4 { return min(totalMoves, 11) }
+            if depth >= 2 { return min(totalMoves, 10) }
+            return min(totalMoves, 9)
+        }
+        if depth >= 4 { return min(totalMoves, 14) }
+        if depth >= 2 { return min(totalMoves, 12) }
+        return min(totalMoves, 10)
+    }
+
+    private func tacticalSearchBudgetSeconds(in state: HexpandState) -> TimeInterval {
+        let early = isEarlyHexpandPhase(state)
+        if sideLength >= 6 { return early ? 1.0 : 1.25 }
+        if sideLength >= 4 { return early ? 0.85 : 1.0 }
+        return early ? 0.7 : 0.85
+    }
+
+    private func tacticalRootMoveLimit(in state: HexpandState) -> Int {
+        let early = isEarlyHexpandPhase(state)
+        if sideLength >= 6 { return early ? 10 : 12 }
+        if sideLength >= 4 { return early ? 12 : 14 }
+        return early ? 10 : 12
+    }
+
+    private func isEarlyHexpandPhase(_ state: HexpandState) -> Bool {
+        let total = boardCoords.isEmpty ? state.owners.count : boardCoords.count
+        guard total > 0 else { return false }
+        let occupied = (boardCoords.isEmpty ? Array(state.owners.keys) : boardCoords).reduce(into: 0) { count, coord in
+            if (state.owners[coord] ?? .empty) != .empty {
+                count += 1
+            }
+        }
+        let occupancy = Double(occupied) / Double(total)
+        let turnThreshold = max(12, total / 3)
+        let occupancyThreshold = sideLength >= 6 ? 0.56 : 0.50
+        return state.turnsPlayed < turnThreshold || occupancy < occupancyThreshold
+    }
+
+    private func emptyMoveSupportScore(at coord: AxialCoord, player: TileState, in state: HexpandState) -> Double {
+        guard (state.owners[coord] ?? .empty) == .empty else { return 0 }
+        var friendlyAdjacent = 0
+        var enemyAdjacent = 0
+        var friendlyLevels = 0
+        var enemyLevels = 0
+        var friendlyCritical = 0
+        var enemyCritical = 0
+
+        for neighbor in neighbors(of: coord, in: state.owners) {
+            let owner = state.owners[neighbor] ?? .empty
+            let level = state.levels[neighbor] ?? 0
+            if owner == player {
+                friendlyAdjacent += 1
+                friendlyLevels += level
+                if level >= 5 { friendlyCritical += 1 }
+            } else if owner == player.opposite {
+                enemyAdjacent += 1
+                enemyLevels += level
+                if level >= 5 { enemyCritical += 1 }
+            }
+        }
+
+        let adjacencyTerm = Double(friendlyAdjacent - enemyAdjacent)
+        let levelTerm = Double(friendlyLevels - enemyLevels) * 0.35
+        let criticalTerm = Double(friendlyCritical - enemyCritical) * 1.5
+        return adjacencyTerm + levelTerm + criticalTerm
+    }
+
+    private func hashHexpandState(_ state: HexpandState) -> Int {
+        var hasher = Hasher()
+        hasher.combine(state.turnsPlayed)
+        let coords = boardCoords.isEmpty ? Array(state.owners.keys) : boardCoords
+        for coord in coords {
+            hasher.combine(coord.q)
+            hasher.combine(coord.r)
+            hasher.combine(tileStateCode(state.owners[coord] ?? .empty))
+            hasher.combine(state.levels[coord] ?? 0)
+        }
+        return hasher.finalize()
+    }
+
+    private func tileStateCode(_ state: TileState) -> Int {
+        switch state {
+        case .empty: return 0
+        case .red: return 1
+        case .blue: return 2
+        }
+    }
+
     private func bestHexpandEvolvedMove(for player: TileState, in state: HexpandState) -> AxialCoord? {
         let moves = orderedHexpandMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
@@ -2250,12 +3013,11 @@ final class GameSceneController: NSObject {
     }
 
     private func bestHexpandNeuralMove(for player: TileState, in state: HexpandState) -> AxialCoord? {
-        guard sideLength >= 4 else { return nil }
+        guard sideLength >= 3 else { return nil }
         guard hexplodeNeuralEngine.isAvailable else { return nil }
 
         let moves = orderedHexpandMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
-        let playerTacticalBefore = summarizeHexpandTactical(state: state, for: player)
 
         guard let rootInference = hexplodeNeuralEngine.infer(
             owners: state.owners,
@@ -2289,20 +3051,10 @@ final class GameSceneController: NSObject {
                 legalMoves: opponentMoves
             )
 
-            // Pure neural move selection: root policy prior plus value of the resulting state.
+            // Neural-only scoring: policy prior + value estimate from the neural model.
             let valueScore = -(opponentInference?.value ?? 0)
-            let tacticalScore = scoreHexpandTacticalMove(
-                move,
-                player: player,
-                before: state,
-                after: next,
-                playerBefore: playerTacticalBefore
-            )
-            let opponentThreats = countImmediateHexpandWins(for: player.opposite, in: next, maxChecks: 10)
             let score = prior
                 + (valueScore * 2.0)
-                + (tacticalScore * hardHexpandNeuralTacticalBlend)
-                - (Double(opponentThreats) * hardHexpandNeuralThreatPenalty)
             if score > bestScore {
                 bestScore = score
                 bestMoves = [move]
@@ -2311,6 +3063,12 @@ final class GameSceneController: NSObject {
             }
         }
         return bestMoves.randomElement()
+    }
+
+    private func bestHexpandRandomLegalMove(for player: TileState, in state: HexpandState) -> AxialCoord? {
+        let legal = hexpandLegalMoves(for: player, in: state)
+        guard !legal.isEmpty else { return nil }
+        return legal.randomElement()
     }
 
     private func scoreHexpandEvolvedMove(
@@ -2482,15 +3240,23 @@ final class GameSceneController: NSObject {
             let currentLevel = state.levels[current] ?? 0
             if currentOwner == .empty || currentLevel <= 5 { continue }
             let explodingPlayer = currentOwner
+            let burstCount = currentLevel / 6
+            let remainder = currentLevel % 6
+            if burstCount <= 0 { continue }
 
-            state.owners[current] = .empty
-            state.levels[current] = 0
+            if remainder > 0 {
+                state.owners[current] = explodingPlayer
+                state.levels[current] = remainder
+            } else {
+                state.owners[current] = .empty
+                state.levels[current] = 0
+            }
 
             for direction in HexGrid.directions {
                 let neighbor = current.adding(direction)
                 guard state.owners[neighbor] != nil else { continue }
                 state.owners[neighbor] = explodingPlayer
-                state.levels[neighbor] = (state.levels[neighbor] ?? 0) + 1
+                state.levels[neighbor] = (state.levels[neighbor] ?? 0) + burstCount
                 if (state.levels[neighbor] ?? 0) > 5, !queued.contains(neighbor) {
                     queue.append(neighbor)
                     queued.insert(neighbor)
@@ -2763,6 +3529,7 @@ final class GameSceneController: NSObject {
         let finish = SCNAction.run { [weak self] _ in
             guard let self else { return }
             self.introCompleted = true
+            self.refreshHexelloMoveHighlights()
             if self.startAIOnIntroComplete {
                 self.startAIOnIntroComplete = false
                 DispatchQueue.main.async { [weak self] in
@@ -2808,6 +3575,26 @@ final class GameSceneController: NSObject {
     private func playPlace() {
         guard let placeAudio else { return }
         boardNode.runAction(SCNAction.playAudio(placeAudio, waitForCompletion: false))
+    }
+
+    private func playTakeover() {
+        guard let takeoverAudio else { return }
+        boardNode.runAction(SCNAction.playAudio(takeoverAudio, waitForCompletion: false))
+    }
+
+    private func playJump() {
+        guard let jumpAudio else { return }
+        boardNode.runAction(SCNAction.playAudio(jumpAudio, waitForCompletion: false))
+    }
+
+    private func playSplit() {
+        guard let splitAudio else { return }
+        boardNode.runAction(SCNAction.playAudio(splitAudio, waitForCompletion: false))
+    }
+
+    private func playRaise() {
+        guard let raiseAudio else { return }
+        boardNode.runAction(SCNAction.playAudio(raiseAudio, waitForCompletion: false))
     }
 
     private func clamp(_ value: Float, min: Float, max: Float) -> Float {
@@ -2878,7 +3665,15 @@ final class GameSceneController: NSObject {
                 if useEasyAI {
                     move = self.bestHexpandEasyMove(for: player, in: stateSnapshot)
                 } else {
-                    move = self.bestHexpandMove(for: player, depth: depth, in: stateSnapshot)
+                    if self.sideLength >= 3 {
+                        // Hard Hexplode (small + large): neural-first with random legal fallback.
+                        move = self.bestHexpandNeuralMove(for: player, in: stateSnapshot)
+                            ?? self.bestHexpandRandomLegalMove(for: player, in: stateSnapshot)
+                    } else {
+                        move = self.bestHexpandTacticalMove(for: player, depth: depth, in: stateSnapshot)
+                            ?? self.bestHexpandEvolvedMove(for: player, in: stateSnapshot)
+                            ?? self.bestHexpandMove(for: player, depth: max(2, depth - 1), in: stateSnapshot)
+                    }
                 }
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }

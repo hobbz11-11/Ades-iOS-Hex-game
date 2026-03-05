@@ -395,6 +395,21 @@ final class HexTileNode: SCNNode {
         }
     }
 
+    static func hexelloColor(for state: TileState) -> UIColor {
+        switch state {
+        case .empty:
+            return hexelloPalette.emptyColor
+        case .red:
+            return hexelloPalette.redColor
+        case .blue:
+            return hexelloPalette.blueColor
+        }
+    }
+
+    static func hexelloTileBaseColor() -> UIColor {
+        hexelloPalette.emptyColor
+    }
+
     static func hexfectionPieceColor(for state: TileState) -> UIColor {
         switch state {
         case .red:

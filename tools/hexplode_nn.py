@@ -13,8 +13,6 @@ import torch.nn.functional as F
 RED = 1
 BLUE = 2
 EMPTY = 0
-WIN_SCORE_TARGET = 85
-
 DIRECTIONS = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
 
 
@@ -133,12 +131,21 @@ class HexplodeEnv:
                     continue
 
                 exploding_player = cur_owner
-                owners[cur] = EMPTY
-                levels[cur] = 0
+                burst_count = cur_level // 6
+                remainder = cur_level % 6
+                if burst_count <= 0:
+                    continue
+
+                if remainder > 0:
+                    owners[cur] = exploding_player
+                    levels[cur] = remainder
+                else:
+                    owners[cur] = EMPTY
+                    levels[cur] = 0
 
                 for n in self.neighbors[cur]:
                     owners[n] = exploding_player
-                    levels[n] += 1
+                    levels[n] += burst_count
                     if levels[n] > 5 and n not in queued:
                         queue.append(n)
                         queued.add(n)
@@ -183,14 +190,9 @@ class HexplodeEnv:
         return red, blue
 
     def terminal_winner(self, state: State) -> int | None:
-        red_score, blue_score = self.score_totals(state)
-        if red_score >= WIN_SCORE_TARGET or blue_score >= WIN_SCORE_TARGET:
-            if red_score > blue_score:
-                return RED
-            if blue_score > red_score:
-                return BLUE
-            return 0
-
+        # Match in-game Hexplode hard rules: no score target terminal.
+        # A game ends only by wipeout (after opening turns), otherwise callers
+        # decide by max-turn fallback using total ball count.
         if state.turns_played >= 2:
             red_pieces, blue_pieces = self.piece_totals(state)
             if red_pieces > 0 and blue_pieces == 0:
