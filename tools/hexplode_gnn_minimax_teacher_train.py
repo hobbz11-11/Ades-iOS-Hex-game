@@ -76,6 +76,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--holdout-base-states", type=int, default=500)
     parser.add_argument("--holdout-symmetry-rotations", type=int, default=6)
     parser.add_argument("--holdout-seed", type=int, default=31337)
+    parser.add_argument("--holdout-cache-file", type=str, default="")
+    parser.add_argument("--holdout-progress-every", type=int, default=10)
+    parser.add_argument("--holdout-progress-file", type=str, default="")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "mps", "cuda"])
     parser.add_argument(
         "--eval-device",
@@ -626,21 +629,160 @@ def build_fixed_holdout_dataset(
     state_minimax_ply: int,
     state_minimax_branch_cap: int,
     seed: int,
+    cache_file: Path | None = None,
+    progress_every: int = 0,
+    progress_file: Path | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    rng = random.Random(seed)
+    def save_cache(records: List[dict]) -> None:
+        if cache_file is None:
+            return
+        payload = {
+            "version": 1,
+            "side_length": int(env.side_length),
+            "num_nodes": int(len(env.coords)),
+            "states": records,
+        }
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_file.with_suffix(cache_file.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        tmp.replace(cache_file)
+
+    def load_cache() -> List[dict]:
+        if cache_file is None or not cache_file.exists():
+            return []
+        try:
+            raw = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Init] holdout cache unreadable ({cache_file}): {exc}. Starting fresh.")
+            return []
+
+        if isinstance(raw, dict):
+            side = int(raw.get("side_length", env.side_length))
+            if side != int(env.side_length):
+                print(
+                    f"[Init] holdout cache side mismatch (cache={side}, run={env.side_length}); ignoring cache."
+                )
+                return []
+            records = raw.get("states", [])
+        elif isinstance(raw, list):
+            records = raw
+        else:
+            records = []
+
+        valid: List[dict] = []
+        node_count = len(env.coords)
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            owners = rec.get("owners")
+            levels = rec.get("levels")
+            player = rec.get("player")
+            turns = rec.get("turns_played", 0)
+            if not isinstance(owners, list) or not isinstance(levels, list):
+                continue
+            if len(owners) != node_count or len(levels) != node_count:
+                continue
+            if player not in (RED, BLUE):
+                continue
+            try:
+                valid.append(
+                    {
+                        "owners": [int(v) for v in owners],
+                        "levels": [int(v) for v in levels],
+                        "turns_played": int(turns),
+                        "player": int(player),
+                    }
+                )
+            except Exception:  # noqa: BLE001
+                continue
+        return valid
+
+    def emit_progress(
+        *,
+        phase: str,
+        status: str,
+        base_done: int,
+        base_target: int,
+        attempts_done: int,
+        attempts_target: int,
+        elapsed: float,
+        labeled_done: int = 0,
+        labeled_target: int = 0,
+        sample_count: int = 0,
+    ) -> None:
+        base_pct = (100.0 * base_done / max(1, base_target))
+        msg = (
+            f"[Init] {phase} {status}: base_states={base_done}/{base_target} ({base_pct:.1f}%) "
+            f"attempts={attempts_done}/{attempts_target} elapsed={format_duration(elapsed)}"
+        )
+        if labeled_target > 0:
+            label_pct = (100.0 * labeled_done / max(1, labeled_target))
+            msg += f" labels={labeled_done}/{labeled_target} ({label_pct:.1f}%)"
+        if sample_count > 0:
+            msg += f" samples={sample_count}"
+        print(msg, flush=True)
+
+        if progress_file is None:
+            return
+        payload = {
+            "phase": phase,
+            "status": status,
+            "base_states_completed": int(base_done),
+            "base_states_target": int(base_target),
+            "attempts": int(attempts_done),
+            "max_attempts": int(attempts_target),
+            "elapsed_sec": float(elapsed),
+            "labeled_completed": int(labeled_done),
+            "labeled_target": int(labeled_target),
+            "samples_generated": int(sample_count),
+        }
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = progress_file.with_suffix(progress_file.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        tmp.replace(progress_file)
+
     rotation_maps = build_rotation_maps(env, symmetry_rotations).maps
     num_nodes = len(env.coords)
-    features: List[torch.Tensor] = []
-    policy_targets: List[torch.Tensor] = []
-    value_targets: List[float] = []
-    base_count = 0
 
     target_states = max(32, base_states)
-    attempts = 0
-    max_attempts = target_states * 60
+    cache_records = load_cache()
+    if len(cache_records) > target_states:
+        cache_records = cache_records[:target_states]
+    print(
+        f"[Init] holdout cache: {len(cache_records)}/{target_states} base states "
+        f"from {cache_file if cache_file is not None else '(in-memory only)'}",
+        flush=True,
+    )
 
-    while attempts < max_attempts and base_count < target_states:
+    gen_started = time.monotonic()
+    needed = max(0, target_states - len(cache_records))
+    attempts = 0
+    max_attempts = max(needed, 1) * 60
+    rng = random.Random(seed + (len(cache_records) * 9973))
+    emit_progress(
+        phase="holdout_cache",
+        status="progress",
+        base_done=len(cache_records),
+        base_target=target_states,
+        attempts_done=attempts,
+        attempts_target=max_attempts,
+        elapsed=time.monotonic() - gen_started,
+    )
+
+    while attempts < max_attempts and len(cache_records) < target_states:
         attempts += 1
+        if progress_every > 0 and (attempts == 1 or attempts % progress_every == 0):
+            emit_progress(
+                phase="holdout_cache",
+                status="attempt",
+                base_done=len(cache_records),
+                base_target=target_states,
+                attempts_done=attempts,
+                attempts_target=max_attempts,
+                elapsed=time.monotonic() - gen_started,
+            )
         state = env.empty_state()
         player = RED if rng.random() < 0.5 else BLUE
         random_prefix = rng.randint(max(0, state_random_min_plies), max(max(0, state_random_min_plies), max(0, state_random_max_plies)))
@@ -703,6 +845,86 @@ def build_fixed_holdout_dataset(
             num_nodes=num_nodes,
             temperature=1e-6,
         )
+        _ = policy_target  # used to ensure state is labelable; relabeled below.
+
+        cache_records.append(
+            {
+                "owners": state.owners[:],
+                "levels": state.levels[:],
+                "turns_played": int(state.turns_played),
+                "player": int(player),
+            }
+        )
+        if progress_every > 0 and (
+            len(cache_records) % progress_every == 0 or len(cache_records) == target_states
+        ):
+            save_cache(cache_records)
+            emit_progress(
+                phase="holdout_cache",
+                status="progress",
+                base_done=len(cache_records),
+                base_target=target_states,
+                attempts_done=attempts,
+                attempts_target=max_attempts,
+                elapsed=time.monotonic() - gen_started,
+            )
+
+    if len(cache_records) < target_states:
+        raise RuntimeError(
+            f"Failed to build fixed holdout base states ({len(cache_records)}/{target_states})."
+        )
+
+    save_cache(cache_records)
+    emit_progress(
+        phase="holdout_cache",
+        status="done",
+        base_done=len(cache_records),
+        base_target=target_states,
+        attempts_done=attempts,
+        attempts_target=max_attempts,
+        elapsed=time.monotonic() - gen_started,
+    )
+
+    features: List[torch.Tensor] = []
+    policy_targets: List[torch.Tensor] = []
+    value_targets: List[float] = []
+    label_started = time.monotonic()
+    base_records = cache_records[:target_states]
+    emit_progress(
+        phase="holdout_label",
+        status="progress",
+        base_done=len(base_records),
+        base_target=target_states,
+        attempts_done=attempts,
+        attempts_target=max_attempts,
+        elapsed=time.monotonic() - label_started,
+        labeled_done=0,
+        labeled_target=len(base_records),
+        sample_count=0,
+    )
+
+    for idx, rec in enumerate(base_records, start=1):
+        state = State(
+            owners=[int(v) for v in rec["owners"]],
+            levels=[int(v) for v in rec["levels"]],
+            turns_played=int(rec.get("turns_played", 0)),
+        )
+        player = int(rec["player"])
+        legal_moves, scores = evaluate_all_legal_moves(
+            env=env,
+            state=state,
+            player=player,
+            teacher_ply=max(0, teacher_ply),
+            teacher_branch_cap=max(0, teacher_branch_cap),
+        )
+        if not legal_moves:
+            continue
+        policy_target = legal_policy_from_scores(
+            legal_moves=legal_moves,
+            move_scores=scores,
+            num_nodes=num_nodes,
+            temperature=1e-6,
+        )
         value = score_to_value(max(scores), value_scale)
         append_labeled_state_with_symmetry(
             env=env,
@@ -715,14 +937,38 @@ def build_fixed_holdout_dataset(
             policy_targets=policy_targets,
             value_targets=value_targets,
         )
-        base_count += 1
+        if progress_every > 0 and (idx % progress_every == 0 or idx == len(base_records)):
+            emit_progress(
+                phase="holdout_label",
+                status="progress",
+                base_done=len(base_records),
+                base_target=target_states,
+                attempts_done=attempts,
+                attempts_target=max_attempts,
+                elapsed=time.monotonic() - label_started,
+                labeled_done=idx,
+                labeled_target=len(base_records),
+                sample_count=len(features),
+            )
 
     if not features:
-        raise RuntimeError("Failed to build fixed holdout dataset.")
+        raise RuntimeError("Failed to label fixed holdout dataset.")
 
     x = torch.stack(features, dim=0)
     y_policy = torch.stack(policy_targets, dim=0)
     y_value = torch.tensor(value_targets, dtype=torch.float32)
+    emit_progress(
+        phase="holdout_label",
+        status="done",
+        base_done=len(base_records),
+        base_target=target_states,
+        attempts_done=attempts,
+        attempts_target=max_attempts,
+        elapsed=time.monotonic() - label_started,
+        labeled_done=len(base_records),
+        labeled_target=len(base_records),
+        sample_count=len(features),
+    )
     return x, y_policy, y_value
 
 
@@ -934,6 +1180,16 @@ def main() -> None:
     out_path = Path(args.out)
     best_out_path = Path(args.best_out) if args.best_out else out_path.with_name(f"{out_path.stem}_best{out_path.suffix}")
     stats_path = Path(args.stats_out)
+    holdout_progress_path = (
+        Path(args.holdout_progress_file)
+        if (args.holdout_progress_file or "").strip()
+        else stats_path.with_name(f"{stats_path.stem}_holdout_progress.json")
+    )
+    holdout_cache_path = (
+        Path(args.holdout_cache_file)
+        if (args.holdout_cache_file or "").strip()
+        else stats_path.with_name(f"{stats_path.stem}_holdout_states.json")
+    )
     stop_file = Path(args.stop_file) if args.stop_file else None
 
     print("[Init] building fixed holdout dataset...")
@@ -951,6 +1207,9 @@ def main() -> None:
         state_minimax_ply=max(0, args.state_minimax_ply),
         state_minimax_branch_cap=max(0, args.state_minimax_branch_cap),
         seed=args.holdout_seed,
+        cache_file=holdout_cache_path,
+        progress_every=max(0, args.holdout_progress_every),
+        progress_file=holdout_progress_path,
     )
     holdout_ds = TensorDataset(holdout_x, holdout_policy, holdout_value)
     holdout_loader = DataLoader(holdout_ds, batch_size=max(1, args.batch_size), shuffle=False)
@@ -969,7 +1228,7 @@ def main() -> None:
         f"[Init] device={device}, side={args.side_length}, nodes={num_nodes}, "
         f"hidden={args.hidden_dim}, blocks={args.blocks}, teacher_ply={args.teacher_ply}, "
         f"branch_cap={args.teacher_branch_cap}, replay_cap={args.replay_max_samples}, "
-        f"loaded_from={loaded_from or 'fresh'}"
+        f"loaded_from={loaded_from or 'fresh'}, holdout_cache={holdout_cache_path}"
     )
 
     while time.time() < deadline:

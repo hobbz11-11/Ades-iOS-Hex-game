@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var aiDifficulty: AIDifficulty = .hard
     @StateObject private var soundPlayer = SoundPlayer()
     @State private var canReturnToTitleFromHUD = true
+    @State private var showExitConfirmation = false
 
     private func returnToTitleFromHUD() {
         guard !showTitle, canReturnToTitleFromHUD else { return }
@@ -104,26 +105,6 @@ struct ContentView: View {
 
                 Spacer()
 
-                VStack(spacing: 1) {
-                    Text("Turn")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.82))
-                    Text("\(turnCount)")
-                        .font(.system(size: 26, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 88, height: 46)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.black.opacity(0.85), lineWidth: 3)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                Spacer()
-
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Blue")
                         .font(.system(size: 28, weight: .heavy, design: .rounded))
@@ -168,46 +149,70 @@ struct ContentView: View {
             Spacer()
 
             if gameEnded {
-                VStack(spacing: 6) {
-                    Text(gameOverText)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(winnerText)
-                        .font(.system(size: 22, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
+                Button {
+                    returnToTitleFromHUD()
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(gameOverText)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(winnerText)
+                            .font(.system(size: 22, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white)
+                        Text("Tap to return to menu")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color.black.opacity(0.85), lineWidth: 3)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(
+                                Color.yellow.opacity(0.85),
+                                lineWidth: 2.5 + 1.2 * pulsePhase
+                            )
+                            .shadow(
+                                color: Color.yellow.opacity(0.18 + 0.18 * pulsePhase),
+                                radius: 2 + 3 * pulsePhase,
+                                x: 0,
+                                y: 0
+                            )
+                    )
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.black.opacity(0.85), lineWidth: 3)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(
-                            Color.yellow.opacity(0.85),
-                            lineWidth: 2.5 + 1.2 * pulsePhase
-                        )
-                        .shadow(
-                            color: Color.yellow.opacity(0.18 + 0.18 * pulsePhase),
-                            radius: 2 + 3 * pulsePhase,
-                            x: 0,
-                            y: 0
-                        )
-                )
+                .buttonStyle(.plain)
+                .disabled(!canReturnToTitleFromHUD)
+                .opacity(canReturnToTitleFromHUD ? 1 : 0.75)
                 .padding(.bottom, 24)
+            }
+
+            if !gameEnded {
+                Button {
+                    showExitConfirmation = true
+                } label: {
+                    Text("Exit to Menu")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 156, minHeight: 44)
+                        .padding(.horizontal, 10)
+                        .background(Color.black.opacity(0.52))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.35), lineWidth: 1.2)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(!canReturnToTitleFromHUD)
+                .opacity(canReturnToTitleFromHUD ? 1 : 0.45)
+                .padding(.bottom, 18)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(true)
-        .onTapGesture(count: 2) {
-            returnToTitleFromHUD()
-        }
-        .onTapGesture {
-            guard gameEnded else { return }
-            returnToTitleFromHUD()
-        }
         .onAppear {
             pulsePhase = 0
             withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
@@ -234,6 +239,14 @@ struct ContentView: View {
             withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
                 pulsePhase = 1
             }
+        }
+        .confirmationDialog("Exit current game?", isPresented: $showExitConfirmation, titleVisibility: .visible) {
+            Button("Exit to Main Menu", role: .destructive) {
+                returnToTitleFromHUD()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your current game progress will be lost.")
         }
     }
 
@@ -352,9 +365,23 @@ private struct GameSceneView: UIViewRepresentable {
         let effectiveLength: Int
         switch gameMode {
         case .hexello, .hexfection:
-            effectiveLength = boardSizeOption == .large ? 6 : 4
+            switch boardSizeOption {
+            case .small:
+                effectiveLength = 4
+            case .medium:
+                effectiveLength = 5
+            case .large:
+                effectiveLength = 6
+            }
         case .hexpand:
-            effectiveLength = boardSizeOption == .large ? 4 : 3
+            switch boardSizeOption {
+            case .small:
+                effectiveLength = 3
+            case .medium:
+                effectiveLength = 4
+            case .large:
+                effectiveLength = 5
+            }
         }
         context.coordinator.controller.setBoardSize(effectiveLength)
         context.coordinator.controller.setAIDifficulty(aiDifficulty)
@@ -521,6 +548,7 @@ private struct TitleScreen: View {
         let title: String
         let subtitle: String
         let detail: String
+        let imageName: String
         let symbol: String
         let colors: [Color]
     }
@@ -541,10 +569,19 @@ private struct TitleScreen: View {
         UIImage(named: "hex2") != nil ? "hex2" : "hex"
     }
 
-    private var buildLabel: String {
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        let buildStamp = bundleBuildStamp()
-        return "Build \(build)  \(buildStamp)  R43"
+    private var buildDateLabel: String {
+        "Built \(bundleBuildDateText())"
+    }
+
+    private func panelImage(named name: String) -> UIImage? {
+        if let path = Bundle.main.path(forResource: name, ofType: "png"),
+           let image = UIImage(contentsOfFile: path) {
+            return image.withRenderingMode(.alwaysOriginal)
+        }
+        if let image = UIImage(named: name) {
+            return image.withRenderingMode(.alwaysOriginal)
+        }
+        return nil
     }
 
     private var modeCards: [ModeCardMeta] {
@@ -553,7 +590,8 @@ private struct TitleScreen: View {
                 mode: .hexello,
                 title: "Hexello",
                 subtitle: "Classic Territory Control",
-                detail: "Capture lines and dominate key positions.",
+                detail: "Reversi-style captures on a hex grid; flip chains and control the board.",
+                imageName: "hexello",
                 symbol: "circle.hexagongrid.fill",
                 colors: [Color.blue.opacity(0.95), Color.cyan.opacity(0.8)]
             ),
@@ -561,7 +599,8 @@ private struct TitleScreen: View {
                 mode: .hexpand,
                 title: "Hexplode",
                 subtitle: "Chain Reaction Battles",
-                detail: "Stack pressure and trigger cascading blasts.",
+                detail: "Build critical mass, then trigger explosive chain reactions to overwhelm opponents.",
+                imageName: "hexplode",
                 symbol: "burst.fill",
                 colors: [Color.red.opacity(0.95), Color.orange.opacity(0.85)]
             ),
@@ -569,33 +608,26 @@ private struct TitleScreen: View {
                 mode: .hexfection,
                 title: "Hexfection",
                 subtitle: "Spread and Convert",
-                detail: "Expand influence and outgrow your opponent.",
+                detail: "Spread influence each turn, convert enemy tiles, and eliminate the other color.",
+                imageName: "hexfection",
                 symbol: "waveform.path.ecg.rectangle.fill",
                 colors: [Color.purple.opacity(0.92), Color.indigo.opacity(0.85)]
             )
         ]
     }
 
-    private func bundleBuildStamp() -> String {
+    private func bundleBuildDateText() -> String {
         guard let executableURL = Bundle.main.executableURL,
               let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
               let date = values.contentModificationDate else {
-            return "Stamp ?"
+            return "?"
         }
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return "Stamp \(formatter.string(from: date))"
-    }
-
-    private var smallBoardLabel: String {
-        gameMode == .hexpand ? "3 per side" : "4 per side"
-    }
-
-    private var largeBoardLabel: String {
-        gameMode == .hexpand ? "4 per side" : "6 per side"
+        return formatter.string(from: date)
     }
 
     @ViewBuilder
@@ -664,46 +696,76 @@ private struct TitleScreen: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                RoundedRectangle(cornerRadius: 12)
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
                     .fill(
                         LinearGradient(
                             colors: [
-                                meta.colors[0].opacity(selected ? 0.92 : 0.72),
-                                meta.colors[1].opacity(selected ? 0.88 : 0.66)
+                                Color.black.opacity(selected ? 0.9 : 0.84),
+                                Color.black.opacity(selected ? 0.78 : 0.72),
+                                meta.colors[0].opacity(selected ? 0.8 : 0.62),
+                                meta.colors[1].opacity(selected ? 0.76 : 0.58)
                             ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                            startPoint: .leading,
+                            endPoint: .trailing
                         )
                     )
-                    .frame(height: compact ? 54 : 86)
-                    .overlay {
-                        Image(systemName: meta.symbol)
-                            .font(.system(size: compact ? 24 : 36, weight: .black))
-                            .foregroundStyle(.white.opacity(0.95))
+                    .overlay(
+                        LinearGradient(
+                            colors: [
+                                Color.black.opacity(0.05),
+                                Color.black.opacity(0.18)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                VStack(alignment: .leading, spacing: compact ? 6 : 7) {
+                    HStack(spacing: compact ? 8 : 9) {
+                        if let panelImage = panelImage(named: meta.imageName) {
+                            Image(uiImage: panelImage)
+                                .renderingMode(.original)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: compact ? 100 : 118, height: compact ? 48 : 58)
+                                .padding(.vertical, compact ? 4 : 3)
+                        } else {
+                            Image(systemName: meta.symbol)
+                                .font(.system(size: compact ? 22 : 28, weight: .black))
+                                .foregroundStyle(.white.opacity(0.95))
+                                .frame(width: compact ? 100 : 118)
+                        }
+
+                        VStack(alignment: .leading, spacing: compact ? 1 : 2) {
+                            Text(meta.title)
+                                .font(.system(size: compact ? 19 : 23, weight: .heavy, design: .rounded))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                            Text(meta.subtitle)
+                                .font(.system(size: compact ? 11 : 13, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.84))
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 0)
                     }
 
-                Text(meta.title)
-                    .font(.system(size: compact ? 19 : 22, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text(meta.subtitle)
-                    .font(.system(size: compact ? 11 : 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.86))
-                Text(meta.detail)
-                    .font(.system(size: compact ? 10 : 12, weight: .regular, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.74))
-                    .lineLimit(compact ? 3 : 2)
+                    Text(meta.detail)
+                        .font(.system(size: compact ? 11 : 13, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(compact ? 10 : 11)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(compact ? 10 : 12)
-            .background(Color.black.opacity(selected ? 0.38 : 0.26))
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: compact ? 110 : 142, alignment: .topLeading)
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(selected ? Color.yellow.opacity(0.92) : Color.white.opacity(0.24), lineWidth: selected ? 2.2 : 1)
+                    .stroke(Color.white.opacity(0.3), lineWidth: 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            .shadow(color: selected ? Color.yellow.opacity(0.2) : .clear, radius: 8, x: 0, y: 4)
         }
         .buttonStyle(PressableScaleButtonStyle())
     }
@@ -761,12 +823,17 @@ private struct TitleScreen: View {
     private var boardSizeSection: some View {
         sectionCard(title: "Board Size") {
             HStack(spacing: 10) {
-                optionButton("Small  \(smallBoardLabel)", selected: boardSizeOption == .small) {
+                optionButton("Small", selected: boardSizeOption == .small) {
                     guard boardSizeOption != .small else { return }
                     boardSizeOption = .small
                     onToggle()
                 }
-                optionButton("Large  \(largeBoardLabel)", selected: boardSizeOption == .large) {
+                optionButton("Medium", selected: boardSizeOption == .medium) {
+                    guard boardSizeOption != .medium else { return }
+                    boardSizeOption = .medium
+                    onToggle()
+                }
+                optionButton("Large", selected: boardSizeOption == .large) {
                     guard boardSizeOption != .large else { return }
                     boardSizeOption = .large
                     onToggle()
@@ -810,6 +877,11 @@ private struct TitleScreen: View {
                     optionButton("Easy", selected: aiDifficulty == .easy) {
                         guard aiDifficulty != .easy else { return }
                         aiDifficulty = .easy
+                        onToggle()
+                    }
+                    optionButton("Medium", selected: aiDifficulty == .medium) {
+                        guard aiDifficulty != .medium else { return }
+                        aiDifficulty = .medium
                         onToggle()
                     }
                     optionButton("Hard", selected: aiDifficulty == .hard) {
@@ -866,9 +938,6 @@ private struct TitleScreen: View {
 
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(spacing: 14) {
-                        Color.clear
-                            .frame(height: 1)
-
                         Image(titleLogoName)
                             .resizable()
                             .scaledToFit()
@@ -883,9 +952,6 @@ private struct TitleScreen: View {
                                 Text("Choose Your Game")
                                     .font(.system(size: 21, weight: .heavy, design: .rounded))
                                     .foregroundStyle(.white)
-                                Text("Select a mode to continue.")
-                                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.78))
                             }
                             .frame(width: contentWidth, alignment: .leading)
 
@@ -906,7 +972,7 @@ private struct TitleScreen: View {
                                 }
                                 .frame(width: contentWidth, alignment: .leading)
                             } else {
-                                VStack(spacing: 12) {
+                                VStack(spacing: 10) {
                                     ForEach(Array(modeCards.enumerated()), id: \.offset) { _, card in
                                         modeCard(card, selected: gameMode == card.mode) {
                                             if gameMode != card.mode {
@@ -978,7 +1044,7 @@ private struct TitleScreen: View {
 
                         Color.clear.frame(height: 8)
                     }
-                    .padding(.top, safeInsets.top + 12)
+                    .padding(.top, (safeInsets.top * 0.5) + 8)
                     .padding(.bottom, safeInsets.bottom + 14)
                     .padding(.horizontal, horizontalMargin)
                     .frame(maxWidth: .infinity, alignment: .top)
@@ -988,25 +1054,8 @@ private struct TitleScreen: View {
                 .id(layoutKey)
             }
         }
-        .overlay(alignment: .top) {
-            Text(buildLabel)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
-                )
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .allowsHitTesting(false)
-        }
         .overlay(alignment: .bottom) {
-            Text("UI R43")
+            Text(buildDateLabel)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.horizontal, 10)
@@ -1245,6 +1294,7 @@ private struct SetupOptionRow<Content: View>: View {
 }
 private enum BoardSizeOption {
     case small
+    case medium
     case large
 }
 

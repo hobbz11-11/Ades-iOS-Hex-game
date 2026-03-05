@@ -9,6 +9,7 @@ enum GameMode: String {
 
 enum AIDifficulty {
     case easy
+    case medium
     case hard
 }
 
@@ -393,7 +394,6 @@ final class GameSceneController: NSObject {
             tileNodes[coord]?.setState(owner)
             updateHexfectionPiece(at: coord, owner: owner, animated: false)
         }
-        currentPlayer = .red
         onTurnUpdate?(currentPlayer)
         onActiveUpdate?(currentPlayer)
         onMessageUpdate?("Select one of your tiles")
@@ -1760,7 +1760,7 @@ final class GameSceneController: NSObject {
 
     func startNewGame() {
         prepareForMenuReturn()
-        currentPlayer = .red
+        currentPlayer = Bool.random() ? .red : .blue
         onTurnUpdate?(currentPlayer)
         onMessageUpdate?("")
         startAIOnIntroComplete = true
@@ -1838,9 +1838,15 @@ final class GameSceneController: NSObject {
             onTurnUpdate?(currentPlayer)
             onActiveUpdate?(currentPlayer)
             if !hasLegalMove(for: currentPlayer) {
-                onMessageUpdate?("No Moves Possible")
-                let (_, winner) = gameOverMessage()
-                onGameOver?("No Moves Possible", winner)
+                let hasEmptyTiles = tileStates.values.contains(.empty)
+                let (message, winner) = gameOverMessage()
+                if hasEmptyTiles {
+                    onMessageUpdate?("No Moves Possible")
+                    onGameOver?("No Moves Possible", winner)
+                } else {
+                    onMessageUpdate?(message)
+                    onGameOver?(message, winner)
+                }
                 isGameOver = true
                 clearHexelloMoveHighlights()
             }
@@ -2167,13 +2173,6 @@ final class GameSceneController: NSObject {
         let moves = legalMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
 
-        if aiDifficulty == .easy {
-            let scored = moves.map { (coord: $0, flips: flipsForMove(at: $0, player: player, in: state).count) }
-            let bestFlips = scored.map(\.flips).max() ?? 0
-            let nearBest = scored.filter { $0.flips >= max(1, bestFlips - 1) }.map(\.coord)
-            return nearBest.randomElement() ?? scored.max { $0.flips < $1.flips }?.coord
-        }
-
         let depth = hexelloSearchDepth(in: state)
         var bestMoves: [AxialCoord] = []
         var bestScore = Int.min
@@ -2200,8 +2199,28 @@ final class GameSceneController: NSObject {
             }
             alpha = max(alpha, bestScore)
         }
+        guard let bestMove = bestMoves.randomElement() else { return nil }
 
-        return bestMoves.randomElement()
+        // Easy/medium keep hard evaluation, but occasionally replace with a random legal alternative.
+        let randomOverrideDenominator: Int?
+        switch aiDifficulty {
+        case .easy:
+            randomOverrideDenominator = 3
+        case .medium:
+            randomOverrideDenominator = 5
+        case .hard:
+            randomOverrideDenominator = nil
+        }
+
+        guard let denominator = randomOverrideDenominator else {
+            return bestMove
+        }
+        guard Int.random(in: 1...denominator) == 1 else {
+            return bestMove
+        }
+
+        let alternatives = moves.filter { $0 != bestMove }
+        return alternatives.randomElement() ?? bestMove
     }
 
     private func legalMoves(for player: TileState) -> [AxialCoord] {
@@ -3649,7 +3668,7 @@ final class GameSceneController: NSObject {
         switch aiDifficulty {
         case .easy:
             useEasyAI = true
-        case .hard:
+        case .medium, .hard:
             useEasyAI = false
         }
         let depth = hexpandSearchDepth()
@@ -3690,7 +3709,7 @@ final class GameSceneController: NSObject {
     }
 
     private func hexpandSearchDepth() -> Int {
-        guard aiDifficulty == .hard else {
+        guard aiDifficulty != .easy else {
             return 2
         }
         return 5
