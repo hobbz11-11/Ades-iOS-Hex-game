@@ -1,7 +1,7 @@
 import SceneKit
 import UIKit
 
-enum TileState {
+nonisolated enum TileState: Sendable {
     case empty
     case red
     case blue

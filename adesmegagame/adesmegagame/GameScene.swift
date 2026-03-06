@@ -1963,9 +1963,7 @@ final class GameSceneController: NSObject {
         guard aiEnabled, !isAnimatingMove, introCompleted, !aiMoveScheduled, !isGameOver else { return }
 
         if gameMode == .hexello {
-            if let move = bestMove(for: currentPlayer) {
-                scheduleAIMove(move)
-            }
+            scheduleHexelloAIMove()
             return
         }
 
@@ -2033,11 +2031,16 @@ final class GameSceneController: NSObject {
         return ((playerCount - opponentCount) * 12) + ((mobility - opponentMobility) * 3)
     }
 
-    private func bestHexfectionMove(for player: TileState, in state: [AxialCoord: TileState]) -> HexfectionAIMove? {
+    private func bestHexfectionMove(
+        for player: TileState,
+        in state: [AxialCoord: TileState],
+        difficulty: AIDifficulty? = nil
+    ) -> HexfectionAIMove? {
+        let effectiveDifficulty = difficulty ?? aiDifficulty
         let moves = hexfectionLegalMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
 
-        if aiDifficulty == .easy {
+        if effectiveDifficulty == .easy {
             let scored = moves
                 .map { move in
                     let next = simulateHexfectionMove(move, player: player, in: state)
@@ -2168,18 +2171,26 @@ final class GameSceneController: NSObject {
         return value > 0 ? (10_000 + depth) : (-10_000 - depth)
     }
 
-    private func bestMove(for player: TileState) -> AxialCoord? {
-        let state = tileStates
+    private func bestMove(
+        for player: TileState,
+        in state: [AxialCoord: TileState]? = nil,
+        difficulty: AIDifficulty? = nil,
+        sideLength: Int? = nil
+    ) -> AxialCoord? {
+        let state = state ?? tileStates
+        let effectiveDifficulty = difficulty ?? aiDifficulty
+        let effectiveSideLength = sideLength ?? self.sideLength
+        let effectiveRadius = max(1, effectiveSideLength - 1)
         let moves = legalMoves(for: player, in: state)
         guard !moves.isEmpty else { return nil }
 
-        let depth = hexelloSearchDepth(in: state)
+        let depth = hexelloSearchDepth(in: state, sideLength: effectiveSideLength)
         var bestMoves: [AxialCoord] = []
         var bestScore = Int.min
         var alpha = Int.min
         let beta = Int.max
 
-        for move in orderedHexelloMoves(for: player, in: state) {
+        for move in orderedHexelloMoves(for: player, in: state, radius: effectiveRadius) {
             let next = simulateHexelloMove(at: move, player: player, in: state)
             var branchAlpha = alpha
             var branchBeta = beta
@@ -2188,6 +2199,8 @@ final class GameSceneController: NSObject {
                 player: player.opposite,
                 maximizingFor: player,
                 depth: depth - 1,
+                radius: effectiveRadius,
+                sideLength: effectiveSideLength,
                 alpha: &branchAlpha,
                 beta: &branchBeta
             )
@@ -2203,7 +2216,7 @@ final class GameSceneController: NSObject {
 
         // Easy/medium keep hard evaluation, but occasionally replace with a random legal alternative.
         let randomOverrideDenominator: Int?
-        switch aiDifficulty {
+        switch effectiveDifficulty {
         case .easy:
             randomOverrideDenominator = 3
         case .medium:
@@ -2252,16 +2265,18 @@ final class GameSceneController: NSObject {
         player: TileState,
         maximizingFor: TileState,
         depth: Int,
+        radius: Int,
+        sideLength: Int,
         alpha: inout Int,
         beta: inout Int
     ) -> Int {
-        let moves = orderedHexelloMoves(for: player, in: state)
+        let moves = orderedHexelloMoves(for: player, in: state, radius: radius)
         let opponentHasMove = !legalMoves(for: player.opposite, in: state).isEmpty
         if moves.isEmpty, !opponentHasMove {
             return terminalHexelloScore(state: state, for: maximizingFor, depth: depth)
         }
         if depth == 0 {
-            return evaluateHexello(state: state, for: maximizingFor)
+            return evaluateHexello(state: state, for: maximizingFor, radius: radius)
         }
         if moves.isEmpty {
             return minimaxHexello(
@@ -2269,6 +2284,8 @@ final class GameSceneController: NSObject {
                 player: player.opposite,
                 maximizingFor: maximizingFor,
                 depth: depth - 1,
+                radius: radius,
+                sideLength: sideLength,
                 alpha: &alpha,
                 beta: &beta
             )
@@ -2287,6 +2304,8 @@ final class GameSceneController: NSObject {
                     player: player.opposite,
                     maximizingFor: maximizingFor,
                     depth: depth - 1,
+                    radius: radius,
+                    sideLength: sideLength,
                     alpha: &childAlpha,
                     beta: &childBeta
                 )
@@ -2312,6 +2331,8 @@ final class GameSceneController: NSObject {
                 player: player.opposite,
                 maximizingFor: maximizingFor,
                 depth: depth - 1,
+                radius: radius,
+                sideLength: sideLength,
                 alpha: &childAlpha,
                 beta: &childBeta
             )
@@ -2325,9 +2346,9 @@ final class GameSceneController: NSObject {
         return best
     }
 
-    private func evaluateHexello(state: [AxialCoord: TileState], for player: TileState) -> Int {
+    private func evaluateHexello(state: [AxialCoord: TileState], for player: TileState, radius: Int) -> Int {
         let opponent = player.opposite
-        let corners = cornerCoordinates()
+        let corners = cornerCoordinates(radius: radius)
         let emptyCount = state.values.filter { $0 == .empty }.count
         let playerMobility = legalMoves(for: player, in: state).count
         let opponentMobility = legalMoves(for: opponent, in: state).count
@@ -2344,14 +2365,14 @@ final class GameSceneController: NSObject {
                 playerCount += 1
                 if corners.contains(coord) {
                     playerCorners += 1
-                } else if isEdge(coord) {
+                } else if isEdge(coord, radius: radius) {
                     playerEdges += 1
                 }
             } else if owner == opponent {
                 opponentCount += 1
                 if corners.contains(coord) {
                     opponentCorners += 1
-                } else if isEdge(coord) {
+                } else if isEdge(coord, radius: radius) {
                     opponentEdges += 1
                 }
             }
@@ -2408,10 +2429,14 @@ final class GameSceneController: NSObject {
             + riskDiff * riskWeight
     }
 
-    private func orderedHexelloMoves(for player: TileState, in state: [AxialCoord: TileState]) -> [AxialCoord] {
+    private func orderedHexelloMoves(
+        for player: TileState,
+        in state: [AxialCoord: TileState],
+        radius: Int
+    ) -> [AxialCoord] {
         legalMoves(for: player, in: state).sorted { lhs, rhs in
-            let lhsScore = hexelloMoveOrderingScore(lhs, player: player, in: state)
-            let rhsScore = hexelloMoveOrderingScore(rhs, player: player, in: state)
+            let lhsScore = hexelloMoveOrderingScore(lhs, player: player, in: state, radius: radius)
+            let rhsScore = hexelloMoveOrderingScore(rhs, player: player, in: state, radius: radius)
             if lhsScore != rhsScore {
                 return lhsScore > rhsScore
             }
@@ -2425,15 +2450,16 @@ final class GameSceneController: NSObject {
     private func hexelloMoveOrderingScore(
         _ coord: AxialCoord,
         player: TileState,
-        in state: [AxialCoord: TileState]
+        in state: [AxialCoord: TileState],
+        radius: Int
     ) -> Int {
         var score = flipsForMove(at: coord, player: player, in: state).count
-        if isCorner(coord) {
+        if isCorner(coord, radius: radius) {
             score += 1000
-        } else if isEdge(coord) {
+        } else if isEdge(coord, radius: radius) {
             score += 80
         }
-        if isAdjacentToEmptyCorner(coord, in: state) {
+        if isAdjacentToEmptyCorner(coord, in: state, radius: radius) {
             score -= 160
         }
         return score
@@ -2455,7 +2481,7 @@ final class GameSceneController: NSObject {
         return playerCount > opponentCount ? (10000 + depth) : (-10000 - depth)
     }
 
-    private func hexelloSearchDepth(in state: [AxialCoord: TileState]) -> Int {
+    private func hexelloSearchDepth(in state: [AxialCoord: TileState], sideLength: Int) -> Int {
         let emptyCount = state.values.filter { $0 == .empty }.count
         if emptyCount <= 14 {
             return 5
@@ -2467,6 +2493,10 @@ final class GameSceneController: NSObject {
     }
 
     private func cornerCoordinates() -> [AxialCoord] {
+        cornerCoordinates(radius: radius)
+    }
+
+    private func cornerCoordinates(radius: Int) -> [AxialCoord] {
         let r = radius
         return [
             AxialCoord(q: r, r: 0),
@@ -2485,8 +2515,8 @@ final class GameSceneController: NSObject {
         }
     }
 
-    private func isAdjacentToEmptyCorner(_ coord: AxialCoord, in state: [AxialCoord: TileState]) -> Bool {
-        for corner in cornerCoordinates() where state[corner] == .empty {
+    private func isAdjacentToEmptyCorner(_ coord: AxialCoord, in state: [AxialCoord: TileState], radius: Int) -> Bool {
+        for corner in cornerCoordinates(radius: radius) where state[corner] == .empty {
             if neighbors(of: corner, in: state).contains(coord) {
                 return true
             }
@@ -3458,21 +3488,27 @@ final class GameSceneController: NSObject {
     }
 
     private func isEdge(_ coord: AxialCoord) -> Bool {
+        isEdge(coord, radius: radius)
+    }
+
+    private func isEdge(_ coord: AxialCoord, radius: Int) -> Bool {
         let x = coord.q
         let z = coord.r
         let y = -x - z
-        let r = radius
-        return max(abs(x), max(abs(y), abs(z))) == r
+        return max(abs(x), max(abs(y), abs(z))) == radius
     }
 
     private func isCorner(_ coord: AxialCoord) -> Bool {
-        let r = radius
-        return (coord.q == r && coord.r == 0)
-            || (coord.q == 0 && coord.r == r)
-            || (coord.q == -r && coord.r == r)
-            || (coord.q == -r && coord.r == 0)
-            || (coord.q == 0 && coord.r == -r)
-            || (coord.q == r && coord.r == -r)
+        isCorner(coord, radius: radius)
+    }
+
+    private func isCorner(_ coord: AxialCoord, radius: Int) -> Bool {
+        return (coord.q == radius && coord.r == 0)
+            || (coord.q == 0 && coord.r == radius)
+            || (coord.q == -radius && coord.r == radius)
+            || (coord.q == -radius && coord.r == 0)
+            || (coord.q == 0 && coord.r == -radius)
+            || (coord.q == radius && coord.r == -radius)
     }
 
     private func buildCamera() {
@@ -3631,11 +3667,36 @@ final class GameSceneController: NSObject {
         hexpandExplosionQueueHead = 0
     }
 
-    private func scheduleAIMove(_ move: AxialCoord) {
+    private func scheduleHexelloAIMove() {
         let delay: TimeInterval = movesMade == 0 ? 1.0 : 0.4
+        let player = currentPlayer
+        let stateSnapshot = tileStates
+        let difficulty = aiDifficulty
+        let sideLength = self.sideLength
+        let token = aiComputationToken
         aiMoveScheduled = true
+
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.applyMove(at: move)
+            guard let self else { return }
+            self.aiComputeQueue.async { [weak self] in
+                guard let self else { return }
+                let move = self.bestMove(
+                    for: player,
+                    in: stateSnapshot,
+                    difficulty: difficulty,
+                    sideLength: sideLength
+                )
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    defer { self.aiMoveScheduled = false }
+                    guard self.aiComputationToken == token else { return }
+                    guard self.currentPlayer == player else { return }
+                    let aiEnabled = (player == .red && self.aiRedEnabled) || (player == .blue && self.aiBlueEnabled)
+                    guard aiEnabled, !self.isAnimatingMove, self.introCompleted, !self.isGameOver else { return }
+                    guard let move else { return }
+                    self.applyMove(at: move)
+                }
+            }
         }
     }
 
@@ -3643,21 +3704,31 @@ final class GameSceneController: NSObject {
         let delay: TimeInterval = movesMade == 0 ? 1.0 : 0.4
         let player = currentPlayer
         let stateSnapshot = tileStates
+        let difficulty = aiDifficulty
+        let token = aiComputationToken
         aiMoveScheduled = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
-            defer { self.aiMoveScheduled = false }
-            guard self.currentPlayer == player else { return }
-            let aiEnabled = (player == .red && self.aiRedEnabled) || (player == .blue && self.aiBlueEnabled)
-            guard aiEnabled, !self.isAnimatingMove, self.introCompleted else { return }
-            guard let move = self.bestHexfectionMove(for: player, in: stateSnapshot) else { return }
-            self.startHexfectionMove(
-                from: move.source,
-                to: move.destination,
-                type: move.type,
-                player: player
-            )
+            self.aiComputeQueue.async { [weak self] in
+                guard let self else { return }
+                let move = self.bestHexfectionMove(for: player, in: stateSnapshot, difficulty: difficulty)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    defer { self.aiMoveScheduled = false }
+                    guard self.aiComputationToken == token else { return }
+                    guard self.currentPlayer == player else { return }
+                    let aiEnabled = (player == .red && self.aiRedEnabled) || (player == .blue && self.aiBlueEnabled)
+                    guard aiEnabled, !self.isAnimatingMove, self.introCompleted, !self.isGameOver else { return }
+                    guard let move else { return }
+                    self.startHexfectionMove(
+                        from: move.source,
+                        to: move.destination,
+                        type: move.type,
+                        player: player
+                    )
+                }
+            }
         }
     }
 

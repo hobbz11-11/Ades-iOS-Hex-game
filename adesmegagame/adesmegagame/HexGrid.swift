@@ -2,7 +2,7 @@ import Foundation
 import SceneKit
 
 // Pointy-top axial coordinates on the XZ plane (Y is up).
-struct AxialCoord: Hashable {
+nonisolated struct AxialCoord: Hashable, Sendable {
     let q: Int
     let r: Int
 
@@ -11,7 +11,7 @@ struct AxialCoord: Hashable {
     }
 }
 
-enum HexGrid {
+nonisolated enum HexGrid {
     static let directions: [AxialCoord] = [
         AxialCoord(q: 1, r: 0),
         AxialCoord(q: 1, r: -1),

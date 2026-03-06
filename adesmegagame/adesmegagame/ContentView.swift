@@ -569,10 +569,6 @@ private struct TitleScreen: View {
         UIImage(named: "hex2") != nil ? "hex2" : "hex"
     }
 
-    private var buildDateLabel: String {
-        "Built \(bundleBuildDateText())"
-    }
-
     private func panelImage(named name: String) -> UIImage? {
         if let path = Bundle.main.path(forResource: name, ofType: "png"),
            let image = UIImage(contentsOfFile: path) {
@@ -614,20 +610,6 @@ private struct TitleScreen: View {
                 colors: [Color.purple.opacity(0.92), Color.indigo.opacity(0.85)]
             )
         ]
-    }
-
-    private func bundleBuildDateText() -> String {
-        guard let executableURL = Bundle.main.executableURL,
-              let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
-              let date = values.contentModificationDate else {
-            return "?"
-        }
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
     }
 
     @ViewBuilder
@@ -1053,16 +1035,6 @@ private struct TitleScreen: View {
                 .scrollBounceBehavior(.always)
                 .id(layoutKey)
             }
-        }
-        .overlay(alignment: .bottom) {
-            Text(buildDateLabel)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.9))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
-                .padding(.bottom, 6)
-                .allowsHitTesting(false)
         }
         .onAppear {
             step = .mode
