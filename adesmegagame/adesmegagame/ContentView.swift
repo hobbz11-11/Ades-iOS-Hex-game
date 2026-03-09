@@ -16,14 +16,16 @@ struct ContentView: View {
     @State private var gameOverText: String = ""
     @State private var winnerText: String = ""
     @State private var gameEnded = false
+    @State private var redAIThinking = false
+    @State private var blueAIThinking = false
     @State private var pulsePhase: CGFloat = 0
     @State private var activePlayer: TileState = .empty
-    @State private var boardSizeOption: BoardSizeOption = .large
+    @State private var boardSizeOption: BoardSizeOption = .medium
     @State private var yawValue: Float = 0
     @State private var pitchValue: Float = 0
     @State private var resetToken = UUID()
     @State private var gameMode: GameMode = .hexello
-    @State private var aiDifficulty: AIDifficulty = .hard
+    @State private var aiDifficulty: AIDifficulty = .medium
     @StateObject private var soundPlayer = SoundPlayer()
     @State private var canReturnToTitleFromHUD = true
     @State private var showExitConfirmation = false
@@ -62,6 +64,8 @@ struct ContentView: View {
                 gameEnded: $gameEnded,
                 activePlayer: $activePlayer,
                 turnCount: $turnCount,
+                redAIThinking: $redAIThinking,
+                blueAIThinking: $blueAIThinking,
                 yawValue: $yawValue,
                 pitchValue: $pitchValue
             )
@@ -69,72 +73,76 @@ struct ContentView: View {
         }
     }
 
+    private func scorePanel(
+        title: String,
+        score: Int,
+        scoreColor: Color,
+        isActive: Bool,
+        isThinking: Bool,
+        alignment: Alignment
+    ) -> some View {
+        VStack(alignment: alignment == .leading ? .leading : .trailing, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("\(score)")
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .foregroundStyle(scoreColor)
+            }
+            .frame(width: 120, height: 32, alignment: alignment)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.08))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.black.opacity(0.85), lineWidth: 3)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(
+                        Color.yellow.opacity(isActive && !gameEnded ? 0.9 : 0.0),
+                        lineWidth: isActive && !gameEnded ? (2.5 + 1.2 * pulsePhase) : 0
+                    )
+                    .shadow(
+                        color: Color.yellow.opacity(isActive && !gameEnded ? (0.18 + 0.18 * pulsePhase) : 0),
+                        radius: isActive && !gameEnded ? (2 + 3 * pulsePhase) : 0,
+                        x: 0,
+                        y: 0
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            Text("Thinking")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(isThinking ? 0.92 : 0))
+                .scaleEffect(isThinking ? (0.98 + (0.04 * pulsePhase)) : 1.0)
+                .frame(height: 14, alignment: alignment)
+        }
+    }
+
     private var hudLayer: some View {
         VStack {
             HStack {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Red")
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.85))
-                    Text("\(redScore)")
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.red)
-                }
-                .frame(width: 120, height: 32, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.black.opacity(0.85), lineWidth: 3)
+                scorePanel(
+                    title: "Red",
+                    score: redScore,
+                    scoreColor: .red,
+                    isActive: activePlayer == .red,
+                    isThinking: redAIThinking && !gameEnded,
+                    alignment: .leading
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(
-                            Color.yellow.opacity(activePlayer == .red && !gameEnded ? 0.9 : 0.0),
-                            lineWidth: activePlayer == .red && !gameEnded ? (2.5 + 1.2 * pulsePhase) : 0
-                        )
-                        .shadow(
-                            color: Color.yellow.opacity(activePlayer == .red && !gameEnded ? (0.18 + 0.18 * pulsePhase) : 0),
-                            radius: activePlayer == .red && !gameEnded ? (2 + 3 * pulsePhase) : 0,
-                            x: 0,
-                            y: 0
-                        )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 14))
 
                 Spacer()
 
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Blue")
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.85))
-                    Text("\(blueScore)")
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.blue)
-                }
-                .frame(width: 120, height: 32, alignment: .trailing)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.white.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.black.opacity(0.85), lineWidth: 3)
+                scorePanel(
+                    title: "Blue",
+                    score: blueScore,
+                    scoreColor: .blue,
+                    isActive: activePlayer == .blue,
+                    isThinking: blueAIThinking && !gameEnded,
+                    alignment: .trailing
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(
-                            Color.yellow.opacity(activePlayer == .blue && !gameEnded ? 0.9 : 0.0),
-                            lineWidth: activePlayer == .blue && !gameEnded ? (2.5 + 1.2 * pulsePhase) : 0
-                        )
-                        .shadow(
-                            color: Color.yellow.opacity(activePlayer == .blue && !gameEnded ? (0.18 + 0.18 * pulsePhase) : 0),
-                            radius: activePlayer == .blue && !gameEnded ? (2 + 3 * pulsePhase) : 0,
-                            x: 0,
-                            y: 0
-                        )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
@@ -280,6 +288,8 @@ struct ContentView: View {
                         gameEnded = false
                         redScore = 0
                         blueScore = 0
+                        redAIThinking = false
+                        blueAIThinking = false
                         turnCount = 0
                         activePlayer = .empty
                         startToken = UUID()
@@ -312,6 +322,8 @@ private struct GameSceneView: UIViewRepresentable {
     @Binding var gameEnded: Bool
     @Binding var activePlayer: TileState
     @Binding var turnCount: Int
+    @Binding var redAIThinking: Bool
+    @Binding var blueAIThinking: Bool
     @Binding var yawValue: Float
     @Binding var pitchValue: Float
 
@@ -337,6 +349,10 @@ private struct GameSceneView: UIViewRepresentable {
             },
             onTurnCount: { value in
                 turnCount = value
+            },
+            onAIThinking: { player in
+                redAIThinking = player == .red
+                blueAIThinking = player == .blue
             },
             onYaw: { yaw in
                 yawValue = yaw
@@ -397,6 +413,7 @@ private struct GameSceneView: UIViewRepresentable {
         private let onGameOver: (String, String) -> Void
         private let onActive: (TileState) -> Void
         private let onTurnCount: (Int) -> Void
+        private let onAIThinking: (TileState) -> Void
         private let onYaw: (Float) -> Void
         private let onPitch: (Float) -> Void
         private var lastStartToken = UUID()
@@ -409,6 +426,7 @@ private struct GameSceneView: UIViewRepresentable {
             onGameOver: @escaping (String, String) -> Void,
             onActive: @escaping (TileState) -> Void,
             onTurnCount: @escaping (Int) -> Void,
+            onAIThinking: @escaping (TileState) -> Void,
             onYaw: @escaping (Float) -> Void,
             onPitch: @escaping (Float) -> Void
         ) {
@@ -418,6 +436,7 @@ private struct GameSceneView: UIViewRepresentable {
             self.onGameOver = onGameOver
             self.onActive = onActive
             self.onTurnCount = onTurnCount
+            self.onAIThinking = onAIThinking
             self.onYaw = onYaw
             self.onPitch = onPitch
             super.init()
@@ -449,6 +468,9 @@ private struct GameSceneView: UIViewRepresentable {
             controller.onTurnCountUpdate = { count in
                 onTurnCount(count)
             }
+            controller.onAIThinkingUpdate = { player in
+                onAIThinking(player)
+            }
             controller.onGameOver = { [weak self] message, winner in
                 onGameOver(message, winner)
                 self?.controller.startGameOverAnimation()
@@ -467,8 +489,10 @@ private struct GameSceneView: UIViewRepresentable {
             controller.onGameOver = nil
             controller.onActiveUpdate = nil
             controller.onTurnCountUpdate = nil
+            controller.onAIThinkingUpdate = nil
             controller.onYawUpdate = nil
             controller.onPitchUpdate = nil
+            onAIThinking(.empty)
         }
 
         func configure(_ view: SCNView) {
@@ -567,6 +591,13 @@ private struct TitleScreen: View {
 
     private var titleLogoName: String {
         UIImage(named: "hex2") != nil ? "hex2" : "hex"
+    }
+
+    private func applyDefaultSetup() {
+        boardSizeOption = .medium
+        aiDifficulty = .medium
+        redAI = false
+        blueAI = true
     }
 
     private func panelImage(named name: String) -> UIImage? {
@@ -943,6 +974,7 @@ private struct TitleScreen: View {
                                         modeCard(card, selected: gameMode == card.mode, compact: true) {
                                             if gameMode != card.mode {
                                                 gameMode = card.mode
+                                                applyDefaultSetup()
                                                 onToggle()
                                             }
                                             withAnimation(.easeInOut(duration: 0.22)) {
@@ -959,6 +991,7 @@ private struct TitleScreen: View {
                                         modeCard(card, selected: gameMode == card.mode) {
                                             if gameMode != card.mode {
                                                 gameMode = card.mode
+                                                applyDefaultSetup()
                                                 onToggle()
                                             }
                                             withAnimation(.easeInOut(duration: 0.22)) {
