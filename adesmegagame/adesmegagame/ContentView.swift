@@ -617,7 +617,7 @@ private struct TitleScreen: View {
                 mode: .hexello,
                 title: "Hexello",
                 subtitle: "Classic Territory Control",
-                detail: "Reversi-style captures on a hex grid; flip chains and control the board.",
+                detail: "Tile-flipping strategy on a hex grid; create chains and control the board.",
                 imageName: "hexello",
                 symbol: "circle.hexagongrid.fill",
                 colors: [Color.blue.opacity(0.95), Color.cyan.opacity(0.8)]
